@@ -1,0 +1,106 @@
+﻿@page "/"
+@using Orchestrator.Core.Models
+@inject IHttpClientFactory ClientFactory
+@inject IJSRuntime JS
+
+<h1>Orchestrator Dashboard</h1>
+
+@if (services == null)
+{
+    <p><em>Loading…</em></p>
+}
+else
+{
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Service</th>
+                <th>Instances</th>
+                <th>State</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var svc in services)
+            {
+                <tr>
+                    <td>@svc.Name</td>
+                    <td>@svc.RunningInstances</td>
+                    <td>@svc.State</td>
+                    <td>
+                        <button class="btn btn-sm btn-success" @onclick="() => Start(svc.Name)">Start</button>
+                        <button class="btn btn-sm btn-danger" @onclick="() => Stop(svc.Name)">Stop</button>
+                        <button class="btn btn-sm btn-info" @onclick="() => ShowLogs(svc.Name)">Logs</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+<pre style="background:#f8f9fa; padding:1rem; border-radius:.25rem;">
+    @logOutput
+</pre>
+
+@code {
+    List<ServiceStatus> services;
+    string logOutput = "";
+    DotNetObjectReference<Index>? objRef;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var client = ClientFactory.CreateClient("OrcApi");
+        services = await client.GetFromJsonAsync<List<ServiceStatus>>("api/services");
+    }
+
+    async Task Start(string name)
+    {
+        var client = ClientFactory.CreateClient("OrcApi");
+        await client.PostAsync($"api/services/{name}/start", null);
+        await Refresh();
+    }
+
+    async Task Stop(string name)
+    {
+        var client = ClientFactory.CreateClient("OrcApi");
+        await client.PostAsync($"api/services/{name}/stop", null);
+        await Refresh();
+    }
+
+    async Task Refresh()
+    {
+        var client = ClientFactory.CreateClient("OrcApi");
+        services = await client.GetFromJsonAsync<List<ServiceStatus>>("api/services");
+        StateHasChanged();
+    }
+
+    async Task ShowLogs(string name)
+    {
+        // clear and render
+        logOutput = $"--- Logs for {name} ---\n";
+        StateHasChanged();
+
+        // Dispose previous JS reference and close previous stream
+        objRef?.Dispose();
+        await JS.InvokeVoidAsync("logStream.close");
+
+        // Create a fresh .NET object reference
+        objRef = DotNetObjectReference.Create(this);
+
+        // Open the EventSource in JS, passing our .NET ref
+        var url = $"https://localhost:5001/api/services/{name}/logs/stream";
+        await JS.InvokeVoidAsync("logStream.open", objRef, url);
+    }
+
+    [JSInvokable]
+    public void ReceiveLogChunk(string chunk)
+    {
+        logOutput += chunk + "\n";
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        objRef?.Dispose();
+    }
+}

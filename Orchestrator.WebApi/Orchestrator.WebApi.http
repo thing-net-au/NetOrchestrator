@@ -1,0 +1,6 @@
+@Orchestrator.WebApi_HostAddress = http://localhost:5202
+
+GET {{Orchestrator.WebApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

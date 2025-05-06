@@ -1,0 +1,45 @@
+{
+  "Services": {
+    "WorkerApp": {
+      "Name": "WorkerApp",
+      "ExecutablePath": "apps/WorkerApp.dll",
+      "Arguments": "--env=prod --queue=tasks",
+      "MinInstances": 2,
+      "MaxInstances": 10,
+      "SchedulePolicy": {
+        "Type": "demand",
+        "Threshold": 75,
+        "Cron": null
+      },
+      "Dependencies": [ "QueueListener" ]
+    },
+    "QueueListener": {
+      "Name": "QueueListener",
+      "ExecutablePath": "apps/QueueListener.dll",
+      "Arguments": "--env=prod",
+      "MinInstances": 1,
+      "MaxInstances": 2,
+      "SchedulePolicy": {
+        "Type": "steady",
+        "Threshold": null,
+        "Cron": null
+      },
+      "Dependencies": []
+    }
+  },
+  "Global": {
+    "LoggingLevel": "Info",
+    "IpcTimeout": 5000,
+    "HealthCheckInterval": 10000
+  },
+  "Scheduling": {
+    "DefaultPolicy": "steady",
+    "DemandThreshold": 80
+  },
+  "Web": {
+    "UiPort": 5000,
+    "ApiPort": 5001,
+    "StreamBufferSize": 8192,
+    "ApiBaseUrl": "https://localhost:5001/"
+  }
+}
