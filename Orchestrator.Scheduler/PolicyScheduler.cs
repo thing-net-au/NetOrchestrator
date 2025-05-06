@@ -1,5 +1,5 @@
 ﻿// Project: Orchestrator.Scheduler (Class Library)
-// References: Orchestrator.Core, Orchestrator.Supervisor, Microsoft.Extensions.Hosting
+// References: Orchestrator.Core, Orchestrator.Supervisor, Microsoft.Extensions.Hosting, System.Text.Json
 
 using System;
 using System.Linq;
@@ -9,19 +9,34 @@ using Microsoft.Extensions.Hosting;
 using Orchestrator.Core;
 using Orchestrator.Core.Interfaces;
 using Orchestrator.Core.Models;
+using System.Text.Json;
 
 namespace Orchestrator.Scheduler
 {
     /// <summary>
-    /// Background service that enforces scheduling policies for all configured services.
+    /// Background service that enforces scheduling policies for all configured services
+    /// and reports current statuses via the log stream.
     /// </summary>
-    public class PolicyScheduler : BackgroundService
+    public class PolicyScheduler : BackgroundService, IInternalHealth
     {
         private readonly IProcessSupervisor _supervisor;
+        private readonly ILogStreamService _log;
+        private DateTime _lastRun;
 
-        public PolicyScheduler(IProcessSupervisor supervisor)
+        public InternalStatus GetStatus() => new InternalStatus
+        {
+            Name = nameof(PolicyScheduler),
+            IsHealthy = true,  // you could check if _lastRun is within twice the interval
+            Details = $"Last run at {_lastRun:O}"
+        };
+
+
+        public PolicyScheduler(
+            IProcessSupervisor supervisor,
+            ILogStreamService logStream)
         {
             _supervisor = supervisor;
+            _log = logStream;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -33,6 +48,13 @@ namespace Orchestrator.Scheduler
                 // Fetch current statuses
                 var statuses = (await _supervisor.ListStatusAsync()).ToList();
 
+                // Report each service status via log stream
+                foreach (var status in statuses)
+                {
+                    var payload = JsonSerializer.Serialize(status);
+                    _log.Push("ServiceStatus", payload);
+                }
+
                 foreach (var svcConfig in OrchestratorConfig.Current.Services.Values)
                 {
                     var status = statuses.FirstOrDefault(s => s.Name == svcConfig.Name);
@@ -41,7 +63,6 @@ namespace Orchestrator.Scheduler
                     switch (svcConfig.SchedulePolicy.Type.ToLowerInvariant())
                     {
                         case "steady":
-                            // Ensure min <= running <= max
                             if (running < svcConfig.MinInstances)
                                 await _supervisor.StartAsync(svcConfig.Name, svcConfig.MinInstances - running);
                             else if (running > svcConfig.MaxInstances)
@@ -49,10 +70,8 @@ namespace Orchestrator.Scheduler
                             break;
 
                         case "demand":
-                            // Example: scale up if CPU% > threshold (stub)
                             int threshold = svcConfig.SchedulePolicy.Threshold ?? OrchestratorConfig.Current.Scheduling.DemandThreshold;
-                            // TODO: measure actual CPU usage per service
-                            // For now, enforce only min/max
+                            // TODO: integrate actual metric checks
                             if (running < svcConfig.MinInstances)
                                 await _supervisor.StartAsync(svcConfig.Name, svcConfig.MinInstances - running);
                             else if (running > svcConfig.MaxInstances)
@@ -60,16 +79,15 @@ namespace Orchestrator.Scheduler
                             break;
 
                         case "cron":
-                            // TODO: evaluate CRON expression and schedule accordingly
+                            // TODO: evaluate CRON and schedule accordingly
                             break;
 
                         default:
-                            // Fallback to default policy
+                            // fallback
                             break;
                     }
                 }
 
-                // Wait before next evaluation
                 await Task.Delay(interval, stoppingToken);
             }
         }

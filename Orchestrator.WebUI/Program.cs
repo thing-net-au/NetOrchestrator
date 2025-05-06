@@ -13,46 +13,41 @@ namespace Orchestrator.WebUI
         public static void Main(string[] args)
         {
             var builder = WebApplication.CreateBuilder(args);
-         // 2) Load your orchestrator.json from the output folder
+
+            // 1) Load your orchestrator.json
             builder.Configuration
                    .SetBasePath(AppContext.BaseDirectory)
                    .AddJsonFile("orchestrator.json", optional: false, reloadOnChange: true);
             var cfg = new OrchestratorConfig();
             cfg.Load(builder.Configuration);
 
-
-            // Add services to the container.
+            // 2) Blazor Web App hosting
             builder.Services.AddRazorComponents()
-                .AddInteractiveServerComponents();
-
+                            .AddInteractiveServerComponents();          // Server‐side interactivity :contentReference[oaicite:0]{index=0}
             builder.Services.AddHttpClient("OrcApi", c =>
-    c.BaseAddress = new Uri(OrchestratorConfig.Current.Web.ApiBaseUrl));
-            builder.WebHost.ConfigureKestrel(opts =>
-                opts.ListenAnyIP(OrchestratorConfig.Current.Web.UiPort, listenOpts => listenOpts.UseHttps()));
+                c.BaseAddress = new Uri(OrchestratorConfig.Current.Web.ApiBaseUrl));
 
+            // 3) Kestrel on UI port
+            builder.WebHost.ConfigureKestrel(opts =>
+                opts.ListenAnyIP(OrchestratorConfig.Current.Web.UiPort, listen => listen.UseHttps()));
 
             var app = builder.Build();
 
-            // Configure the HTTP request pipeline.
+            // 4) Static files & routing
             if (!app.Environment.IsDevelopment())
             {
                 app.UseExceptionHandler("/Error");
-                // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
                 app.UseHsts();
             }
-
             app.UseHttpsRedirection();
-
-            app.UseStaticFiles();
+            app.UseStaticFiles();   // serve wwwroot/* :contentReference[oaicite:1]{index=1}
+            app.UseRouting();
             app.UseAntiforgery();
-
+            // 5) Wire up your App component as the only endpoint
             app.MapRazorComponents<App>()
-                .AddInteractiveServerRenderMode();
+               .AddInteractiveServerRenderMode();  // fully prerender then hydrate via SignalR :contentReference[oaicite:2]{index=2}
 
             app.Run();
-
-
         }
     }
 }
-

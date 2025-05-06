@@ -7,6 +7,7 @@ using Orchestrator.Core.Interfaces;
 using Orchestrator.Supervisor;
 using Orchestrator.Scheduler;
 using Orchestrator.IPC;
+using Orchestrator.Core.Models;
 
 namespace Orchestrator.WebApi
 {
@@ -72,9 +73,9 @@ namespace Orchestrator.WebApi
             {
                 app.UseExceptionHandler("/Error");
             }
-            app.UseCors(); // add before MapControllers()
 
             app.UseRouting();
+            app.UseCors();
             app.MapControllers();
 
             // SSE log stream
@@ -86,7 +87,17 @@ namespace Orchestrator.WebApi
                 await foreach (var line in logs.StreamAsync(name))
                     await context.Response.WriteAsync($"data: {line}\n\n");
             });
-
+            app.MapGet("/api/status/stream", async context =>
+            {
+                var log = context.RequestServices.GetRequiredService<ILogStreamService>();
+                context.Response.Headers.Add("Content-Type", "text/event-stream");
+                await foreach (var json in log.StreamAsync("InternalStatus"))
+                {
+                    // each json is a serialized InternalStatus
+                    await context.Response.WriteAsync($"data: {json}\n\n");
+                    await context.Response.Body.FlushAsync();
+                }
+            });
             // 7) Run
             app.Run();
         }

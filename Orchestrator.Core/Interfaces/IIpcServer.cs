@@ -1,4 +1,5 @@
-﻿using System.Threading.Tasks;
+﻿using Orchestrator.Core.Models;
+using System.Threading.Tasks;
 
 namespace Orchestrator.Core.Interfaces
 {
@@ -12,5 +13,6 @@ namespace Orchestrator.Core.Interfaces
         /// </summary>
         /// <param name="serviceName">The target service name.</param>
         Task RequestNeighborExecution(string serviceName);
+        Task ReportStatus(WorkerStatus status);
     }
 }

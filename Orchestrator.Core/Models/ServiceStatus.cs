@@ -11,5 +11,8 @@ namespace Orchestrator.Core.Models
         public string Name { get; set; }
         public int RunningInstances { get; set; }
         public State State { get; set; }
+        public DateTime? LastReportAt { get; set; }
+        public bool? LastHealthy { get; set; }
+
     }
 }

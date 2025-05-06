@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Orchestrator.Core.Interfaces;
+using Orchestrator.Core.Models;
 
 namespace Orchestrator.IPC
 {
@@ -16,11 +17,19 @@ namespace Orchestrator.IPC
     /// Background service that listens on a NamedPipe and dispatches
     /// incoming JSON-RPC–style requests to the IpcServer.
     /// </summary>
-    public class IpcBackgroundService : BackgroundService
+    public class IpcBackgroundService : BackgroundService, IInternalHealth
     {
         private readonly IIpcServer _ipc;
         private readonly ILogger<IpcBackgroundService> _logger;
         private const string PipeName = "orc_ipc_pipe";
+        private DateTime _lastRun;
+
+        public InternalStatus GetStatus() => new InternalStatus
+        {
+            Name = nameof(IpcBackgroundService),
+            IsHealthy = true,  // or: (DateTime.UtcNow - _lastRun) < threshold
+            Details = $"Last run at {_lastRun:O}"
+        };
 
         public IpcBackgroundService(IIpcServer ipc, ILogger<IpcBackgroundService> logger)
         {

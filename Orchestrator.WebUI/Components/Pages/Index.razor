@@ -1,24 +1,42 @@
-﻿@page "/"
+﻿@rendermode InteractiveServer
+@page "/"
+@using System.Net.Http
+@using System.Text.Json
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.JSInterop
+@using Orchestrator.Core
 @using Orchestrator.Core.Models
+
 @inject IHttpClientFactory ClientFactory
 @inject IJSRuntime JS
+@inject NavigationManager Nav
 
 <h1>Orchestrator Dashboard</h1>
 
-@if (services == null)
+<div class="mb-3">
+    <span>Status stream: </span>
+    @if (!statusConnected)
+    {
+        <span class="text-danger">🔴 Disconnected</span>
+        <button class="btn btn-sm btn-link" @onclick="ConnectStatus">Reconnect</button>
+    }
+    else
+    {
+        <span class="text-success">🟢 Live</span>
+        <button class="btn btn-sm btn-link text-muted" @onclick="DisconnectStatus">Disconnect</button>
+    }
+</div>
+
+@if (services is null)
 {
     <p><em>Loading…</em></p>
 }
 else
 {
-    <table class="table">
+    <table class="table table-striped mb-4">
         <thead>
-            <tr>
-                <th>Service</th>
-                <th>Instances</th>
-                <th>State</th>
-                <th>Actions</th>
-            </tr>
+            <tr><th>Service</th><th>Instances</th><th>State</th><th>Actions</th></tr>
         </thead>
         <tbody>
             @foreach (var svc in services)
@@ -34,73 +52,255 @@ else
                     </td>
                 </tr>
             }
+            @if(processes == null)
+            {
+                <p>No Processes Registered</p>
+            }
+            else
+            {
+                foreach (var svc in processes)
+                {
+                    <tr>
+                        <td>@svc.Name</td>
+                        <td>@svc.Details</td>
+                        <td>@svc.IsHealthy</td>
+                        <td>
+                            <button class="btn btn-sm btn-success" @onclick="() => Start(svc.Name)">Start</button>
+                            <button class="btn btn-sm btn-danger" @onclick="() => Stop(svc.Name)">Stop</button>
+                            <button class="btn btn-sm btn-info" @onclick="() => ShowLogs(svc.Name)">Logs</button>
+                        </td>
+                    </tr>
+                }
+            }
         </tbody>
     </table>
 }
 
-<pre style="background:#f8f9fa; padding:1rem; border-radius:.25rem;">
-    @logOutput
+<div class="mb-2">
+    <strong>Logs (@(selectedService ?? "none")):</strong>
+    @if (!logConnected)
+    {
+        <span class="text-danger"> 🔴 Disconnected</span>
+    }
+    else
+    {
+        <span class="text-success"> 🟢 Live</span>
+    }
+    @if (logConnected)
+    {
+        <button class="btn btn-sm btn-link text-muted" @onclick="DisconnectLog">Disconnect Logs</button>
+    }
+</div>
+
+<pre class="border rounded p-2 bg-light" style="height:250px; overflow:auto">
+    @foreach (var entry in logEntries)
+    {
+        <div><small>@entry.Timestamp:HH:mm:ss</small> @entry.Message</div>
+    }
+</pre>
+<div class="mb-2">
+    <strong>Supervisor Logs:</strong>
+    @if (!supervisorLogConnected)
+    {
+        <span class="text-danger"> 🔴 Disconnected</span>
+    }
+    else
+    {
+        <span class="text-success"> 🟢 Live</span>
+    }
+    @if (logConnected)
+    {
+        <button class="btn btn-sm btn-link text-muted" @onclick="DisconnectLog">Disconnect Logs</button>
+    }
+    else
+    {
+        <button class="btn btn-sm btn-link text-muted" @onclick="StartSupervisorLogs">Connect to Supervisor</button>
+    }
+</div>
+
+<pre class="border rounded p-2 bg-light" style="height:250px; overflow:auto">
+    @foreach (var entry in logSupervisor)
+    {
+        <div><small>@entry.Timestamp:HH:mm:ss</small> @entry.Message</div>
+    }
 </pre>
 
 @code {
-    List<ServiceStatus> services;
-    string logOutput = "";
-    DotNetObjectReference<Index>? objRef;
+    private List<ServiceStatus> services;
+    private List<InternalStatus> processes;
+    private bool statusConnected;
+    private bool logConnected;
+    private bool supervisorLogConnected;
+    private string selectedService;
+    private List<(DateTime Timestamp, string Message)> logEntries = new();
+    private List<(DateTime Timestamp, string Message)> logSupervisor = new();
+
+    private DotNetObjectReference<Index>? statusRef;
+    private DotNetObjectReference<Index>? logRef;
+    private DotNetObjectReference<Index>? supervisorLogsRef;
 
     protected override async Task OnInitializedAsync()
     {
-        var client = ClientFactory.CreateClient("OrcApi");
-        services = await client.GetFromJsonAsync<List<ServiceStatus>>("api/services");
+        await Refresh();
     }
 
-    async Task Start(string name)
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            //await ConnectStatus();
+            await StartSupervisorLogs();
+        }
+    }
+
+    private async Task ConnectStatus()
+    {
+        statusRef?.Dispose();
+        statusRef = DotNetObjectReference.Create(this);
+
+        var apiBase = OrchestratorConfig.Current.Web.ApiBaseUrl.TrimEnd('/');
+        var statusUrl = $"{apiBase}/api/status/stream";
+
+        await JS.InvokeVoidAsync("logStream.openStatus", statusRef, statusUrl);
+    }
+
+    private async Task DisconnectStatus()
+    {
+        await JS.InvokeVoidAsync("logStream.closeStatus");
+        statusConnected = false;
+        StateHasChanged();
+    }
+
+    private async Task Refresh()
+    {
+        var client = ClientFactory.CreateClient("OrcApi");
+        services = await client.GetFromJsonAsync<List<ServiceStatus>>("api/services");
+        StateHasChanged();
+        processes = await client.GetFromJsonAsync<List<InternalStatus>>("api/services/internal");
+        StateHasChanged();
+    }
+
+    private async Task Start(string name)
     {
         var client = ClientFactory.CreateClient("OrcApi");
         await client.PostAsync($"api/services/{name}/start", null);
         await Refresh();
     }
 
-    async Task Stop(string name)
+    private async Task StartSupervisorLogs()
+    {
+        logSupervisor.Clear();
+        supervisorLogConnected = false;
+        StateHasChanged();
+
+        supervisorLogsRef?.Dispose();
+        supervisorLogsRef = DotNetObjectReference.Create(this);
+
+        var apiBase = OrchestratorConfig.Current.Web.ApiBaseUrl.TrimEnd('/');
+        var logsUrl = $"{apiBase}/api/services/_supervisor/logs/stream";
+
+        await JS.InvokeVoidAsync("logStream.openLog", supervisorLogsRef, logsUrl);
+        supervisorLogConnected = true;
+    }
+    private async Task StopSupervisorLogs()
+    {
+
+    }
+
+    private async Task Stop(string name)
     {
         var client = ClientFactory.CreateClient("OrcApi");
         await client.PostAsync($"api/services/{name}/stop", null);
         await Refresh();
     }
 
-    async Task Refresh()
+    private async Task ShowLogs(string name)
     {
-        var client = ClientFactory.CreateClient("OrcApi");
-        services = await client.GetFromJsonAsync<List<ServiceStatus>>("api/services");
+        selectedService = name;
+        logEntries.Clear();
+        logConnected = false;
         StateHasChanged();
+
+        logRef?.Dispose();
+        logRef = DotNetObjectReference.Create(this);
+
+        var apiBase = OrchestratorConfig.Current.Web.ApiBaseUrl.TrimEnd('/');
+        var logsUrl = $"{apiBase}/api/services/{name}/logs/stream";
+
+        await JS.InvokeVoidAsync("logStream.openLog", logRef, logsUrl);
     }
 
-    async Task ShowLogs(string name)
+    private async Task DisconnectLog()
     {
-        // clear and render
-        logOutput = $"--- Logs for {name} ---\n";
+        await JS.InvokeVoidAsync("logStream.closeLog");
+        logConnected = false;
         StateHasChanged();
-
-        // Dispose previous JS reference and close previous stream
-        objRef?.Dispose();
-        await JS.InvokeVoidAsync("logStream.close");
-
-        // Create a fresh .NET object reference
-        objRef = DotNetObjectReference.Create(this);
-
-        // Open the EventSource in JS, passing our .NET ref
-        var url = $"https://localhost:5001/api/services/{name}/logs/stream";
-        await JS.InvokeVoidAsync("logStream.open", objRef, url);
     }
 
     [JSInvokable]
+    public void StatusOpened()
+    {
+        statusConnected = true;
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void ReceiveStatus(string json)
+    {
+        var updated = JsonSerializer.Deserialize<ServiceStatus>(json);
+        if (updated != null && services != null)
+        {
+            var svc = services.FirstOrDefault(s => s.Name == updated.Name);
+            if (svc != null)
+            {
+                svc.RunningInstances = updated.RunningInstances;
+                svc.State = updated.State;
+                StateHasChanged();
+            }
+        }
+    }
+
+    [JSInvokable]
+    public void ReceiveSupervisorLogChunk(string chunk)
+    {
+        logSupervisor.Add((DateTime.Now, chunk));
+        supervisorLogConnected = true;
+        StateHasChanged();
+    }
+    [JSInvokable]
     public void ReceiveLogChunk(string chunk)
     {
-        logOutput += chunk + "\n";
-        InvokeAsync(StateHasChanged);
+        logEntries.Add((DateTime.Now, chunk));
+        logConnected = true;
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void LogError(string error)
+    {
+        // auto-reconnect logs after 2s
+        Task.Delay(2000).ContinueWith(async _ =>
+        {
+            if (!string.IsNullOrEmpty(selectedService))
+                await ShowLogs(selectedService);
+        });
+    }
+
+    [JSInvokable]
+    public void StatusError(string error)
+    {
+        statusConnected = false;
+        StateHasChanged();
+        // auto-reconnect status after 2s
+        Task.Delay(2000).ContinueWith(async _ => await ConnectStatus());
     }
 
     public void Dispose()
     {
-        objRef?.Dispose();
+        statusRef?.Dispose();
+        logRef?.Dispose();
+        supervisorLogsRef?.Dispose();
+        JS.InvokeVoidAsync("logStream.closeStatus");
+        JS.InvokeVoidAsync("logStream.closeLog");
     }
 }

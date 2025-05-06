@@ -8,6 +8,19 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Core" Version="2.3.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
+    <PackageReference Include="Scrutor" Version="6.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Orchestrator.Core\Orchestrator.Core.csproj" />
+    <ProjectReference Include="..\Orchestrator.IPC\Orchestrator.IPC.csproj" />
+    <ProjectReference Include="..\Orchestrator.Scheduler\Orchestrator.Scheduler.csproj" />
+    <ProjectReference Include="..\Orchestrator.Supervisor\Orchestrator.Supervisor.csproj" />
+    <ProjectReference Include="..\Orchestrator.WebApi\Orchestrator.WebApi.csproj" />
+    <ProjectReference Include="..\Orchestrator.WebUI\Orchestrator.WebUI.csproj" />
   </ItemGroup>
 </Project>

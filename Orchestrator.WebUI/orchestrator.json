@@ -39,7 +39,7 @@
   "Web": {
     "UiPort": 5000,
     "ApiPort": 5001,
+    "BindIP": "127.0.0.1",
     "StreamBufferSize": 8192,
-    "ApiBaseUrl": "https://localhost:5001/"
   }
 }
