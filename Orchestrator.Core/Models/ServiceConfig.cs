@@ -9,6 +9,7 @@ namespace Orchestrator.Core.Models
     {
         public string Name { get; set; }
         public string ExecutablePath { get; set; }
+        public string WorkingDirectory { get; set; }
         public string Arguments { get; set; }
         public int MinInstances { get; set; }
         public int MaxInstances { get; set; }

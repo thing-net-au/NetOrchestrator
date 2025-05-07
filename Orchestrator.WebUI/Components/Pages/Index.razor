@@ -95,7 +95,7 @@ else
 <pre class="border rounded p-2 bg-light" style="height:250px; overflow:auto">
     @foreach (var entry in logEntries)
     {
-        <div><small>@entry.Timestamp:HH:mm:ss</small> @entry.Message</div>
+        <div><small>@entry.Timestamp</small> @entry.Message</div>
     }
 </pre>
 <div class="mb-2">
@@ -108,7 +108,7 @@ else
     {
         <span class="text-success"> 🟢 Live</span>
     }
-    @if (logConnected)
+    @if (supervisorLogConnected)
     {
         <button class="btn btn-sm btn-link text-muted" @onclick="DisconnectLog">Disconnect Logs</button>
     }
@@ -121,7 +121,7 @@ else
 <pre class="border rounded p-2 bg-light" style="height:250px; overflow:auto">
     @foreach (var entry in logSupervisor)
     {
-        <div><small>@entry.Timestamp:HH:mm:ss</small> @entry.Message</div>
+        <div><small>@entry.Timestamp</small> @entry.Message</div>
     }
 </pre>
 
@@ -148,7 +148,6 @@ else
     {
         if (firstRender)
         {
-            //await ConnectStatus();
             await StartSupervisorLogs();
         }
     }
@@ -161,12 +160,14 @@ else
         var apiBase = OrchestratorConfig.Current.Web.ApiBaseUrl.TrimEnd('/');
         var statusUrl = $"{apiBase}/api/status/stream";
 
-        await JS.InvokeVoidAsync("logStream.openStatus", statusRef, statusUrl);
+        await JS.InvokeVoidAsync("logStream.status.open", statusRef, statusUrl);
+        statusConnected = true;
+        StateHasChanged();
     }
 
     private async Task DisconnectStatus()
     {
-        await JS.InvokeVoidAsync("logStream.closeStatus");
+        await JS.InvokeVoidAsync("logStream.status.close");
         statusConnected = false;
         StateHasChanged();
     }
@@ -175,7 +176,6 @@ else
     {
         var client = ClientFactory.CreateClient("OrcApi");
         services = await client.GetFromJsonAsync<List<ServiceStatus>>("api/services");
-        StateHasChanged();
         processes = await client.GetFromJsonAsync<List<InternalStatus>>("api/services/internal");
         StateHasChanged();
     }
@@ -189,6 +189,11 @@ else
 
     private async Task StartSupervisorLogs()
     {
+        var baseUri = new Uri(Nav.BaseUri);
+        var apiPort = OrchestratorConfig.Current.Web.ApiPort;
+        var apiOrigin = new UriBuilder(baseUri.Scheme, baseUri.Host, apiPort).Uri;
+
+        var logsUrl = new Uri(apiOrigin, "/api/services/_supervisor/logs/stream").ToString();
         logSupervisor.Clear();
         supervisorLogConnected = false;
         StateHasChanged();
@@ -196,15 +201,15 @@ else
         supervisorLogsRef?.Dispose();
         supervisorLogsRef = DotNetObjectReference.Create(this);
 
-        var apiBase = OrchestratorConfig.Current.Web.ApiBaseUrl.TrimEnd('/');
-        var logsUrl = $"{apiBase}/api/services/_supervisor/logs/stream";
-
-        await JS.InvokeVoidAsync("logStream.openLog", supervisorLogsRef, logsUrl);
+        await JS.InvokeVoidAsync("logStream.supervisorLog.open", supervisorLogsRef, logsUrl);
         supervisorLogConnected = true;
     }
+
     private async Task StopSupervisorLogs()
     {
-
+        await JS.InvokeVoidAsync("logStream.supervisorLog.close");
+        supervisorLogConnected = false;
+        StateHasChanged();
     }
 
     private async Task Stop(string name)
@@ -217,22 +222,24 @@ else
     private async Task ShowLogs(string name)
     {
         selectedService = name;
+        var baseUri = new Uri(Nav.BaseUri);
+        var apiPort = OrchestratorConfig.Current.Web.ApiPort;
+        var apiOrigin = new UriBuilder(baseUri.Scheme, baseUri.Host, apiPort).Uri;
+
+        var logsUrl = new Uri(apiOrigin, $"/api/services/{name}/logs/stream").ToString();
         logEntries.Clear();
         logConnected = false;
-        StateHasChanged();
 
         logRef?.Dispose();
         logRef = DotNetObjectReference.Create(this);
 
-        var apiBase = OrchestratorConfig.Current.Web.ApiBaseUrl.TrimEnd('/');
-        var logsUrl = $"{apiBase}/api/services/{name}/logs/stream";
-
-        await JS.InvokeVoidAsync("logStream.openLog", logRef, logsUrl);
+        await JS.InvokeVoidAsync("logStream.serviceLog.open", logRef, logsUrl);
+        logConnected = true;
     }
 
     private async Task DisconnectLog()
     {
-        await JS.InvokeVoidAsync("logStream.closeLog");
+        await JS.InvokeVoidAsync("logStream.serviceLog.close");
         logConnected = false;
         StateHasChanged();
     }
@@ -267,6 +274,7 @@ else
         supervisorLogConnected = true;
         StateHasChanged();
     }
+
     [JSInvokable]
     public void ReceiveLogChunk(string chunk)
     {
@@ -278,7 +286,6 @@ else
     [JSInvokable]
     public void LogError(string error)
     {
-        // auto-reconnect logs after 2s
         Task.Delay(2000).ContinueWith(async _ =>
         {
             if (!string.IsNullOrEmpty(selectedService))
@@ -291,7 +298,6 @@ else
     {
         statusConnected = false;
         StateHasChanged();
-        // auto-reconnect status after 2s
         Task.Delay(2000).ContinueWith(async _ => await ConnectStatus());
     }
 
@@ -300,7 +306,9 @@ else
         statusRef?.Dispose();
         logRef?.Dispose();
         supervisorLogsRef?.Dispose();
-        JS.InvokeVoidAsync("logStream.closeStatus");
-        JS.InvokeVoidAsync("logStream.closeLog");
+        JS.InvokeVoidAsync("logStream.status.close");
+        JS.InvokeVoidAsync("logStream.serviceLog.close");
+        JS.InvokeVoidAsync("logStream.supervisorLog.close");
     }
 }
+

@@ -20,16 +20,33 @@ namespace Orchestrator.WebUI
                    .AddJsonFile("orchestrator.json", optional: false, reloadOnChange: true);
             var cfg = new OrchestratorConfig();
             cfg.Load(builder.Configuration);
+            builder.Services.AddServerSideBlazor()
+    .AddCircuitOptions(options => { options.DetailedErrors = true; });
 
             // 2) Blazor Web App hosting
             builder.Services.AddRazorComponents()
                             .AddInteractiveServerComponents();          // Server‐side interactivity :contentReference[oaicite:0]{index=0}
-            builder.Services.AddHttpClient("OrcApi", c =>
-                c.BaseAddress = new Uri(OrchestratorConfig.Current.Web.ApiBaseUrl));
+            builder.Services.AddHttpContextAccessor();
+            builder.Services.AddHttpClient("OrcApi", (sp, client) =>
+            {
+                var httpContext = sp.GetRequiredService<IHttpContextAccessor>().HttpContext
+                                  ?? throw new InvalidOperationException("No HttpContext");
+                var request = httpContext.Request;
+                // Build a UriBuilder off the incoming request
+                var origin = new UriBuilder
+                {
+                    Scheme = request.Scheme,                     // http or https
+                    Host = request.Host.Host,                  // e.g. "localhost" or "api.myapp.com"
+                    Port = 5001                                 // default api port
+                }.Uri;
+
+                client.BaseAddress = origin;
+            });
 
             // 3) Kestrel on UI port
             builder.WebHost.ConfigureKestrel(opts =>
-                opts.ListenAnyIP(OrchestratorConfig.Current.Web.UiPort, listen => listen.UseHttps()));
+                opts.ListenAnyIP(OrchestratorConfig.Current.Web.UiPort));
+                //opts.ListenAnyIP(OrchestratorConfig.Current.Web.UiPort, listen => listen.UseHttps()));
 
             var app = builder.Build();
 

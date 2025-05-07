@@ -9,9 +9,26 @@
   <ItemGroup>
     <Content Remove="Components\Pages\App.razor" />
   </ItemGroup>
+	<ItemGroup Condition="'$(Configuration)'=='Release'">
+		<Content Update="**\appsettings.json">
+			<CopyToPublishDirectory>Never</CopyToPublishDirectory>
+		</Content>
+		<Content Update="**\appsettings.Development.json">
+			<CopyToPublishDirectory>Never</CopyToPublishDirectory>
+		</Content>
+		<Content Update="**\orchestrator.json">
+			<CopyToPublishDirectory>Never</CopyToPublishDirectory>
+		</Content>
+	</ItemGroup>
 
-  <ItemGroup>
+	<ItemGroup>
     <ProjectReference Include="..\Orchestrator.Core\Orchestrator.Core.csproj" />
   </ItemGroup>
+
+	<ItemGroup>
+	  <Content Update="orchestrator.json">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	</ItemGroup>
 
 </Project>

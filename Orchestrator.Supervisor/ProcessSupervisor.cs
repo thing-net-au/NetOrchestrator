@@ -43,8 +43,8 @@ public Task StartAsync(string serviceName, int count = 1)
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
-                _logStream.Push("_supervisor", $"Starting Process {serviceName}.");
-
+                if (!string.IsNullOrEmpty(cfg.WorkingDirectory))
+                    psi.WorkingDirectory = cfg.WorkingDirectory;
                 var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
     
                 // hook exit
@@ -68,6 +68,7 @@ public Task StartAsync(string serviceName, int count = 1)
                 proc.OutputDataReceived += (sender, e) => _logStream.Push(serviceName, e.Data);
                 proc.ErrorDataReceived += (sender, e) => _logStream.Push(serviceName, e.Data);
 
+                _logStream.Push("_supervisor", $"Starting Process {serviceName} WorkingDirectory='{proc.StartInfo.WorkingDirectory}'.");
                 proc.Start();
                 _logStream.Push("_supervisor", $"Started Process {serviceName}, {proc.Id}.");
                 proc.BeginOutputReadLine();

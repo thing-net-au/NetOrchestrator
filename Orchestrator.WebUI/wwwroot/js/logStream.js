@@ -1,99 +1,125 @@
-﻿window.logStream = {
-  _logSource: null,
-  _statusSource: null,
+﻿window.logStream = (() => {
+    // --- Log Stream Helper ---
+    function createEventSource(url, dotnetObj, onMessageMethod, onErrorMethod, onOpenCallback) {
+        const source = new EventSource(url);
 
-  // --- Log stream methods ---
+        source.onopen = () => {
+            console.log(`Connected to ${url}`);
+            if (onOpenCallback) onOpenCallback();
+        };
 
-  open: function (dotnetObj, url) {
-    console.log("logStream.open", url);
-    this.close();
-    this._logSource = this._createEventSource(
-      url,
-      dotnetObj,
-      'ReceiveLogChunk',
-      'LogError',
-      () => {
-        console.log("logStream log connected");
-      }
-    );
-  },
+        source.onmessage = (e) => {
+            console.log(`Message from ${url}`, e.data);
+            dotnetObj.invokeMethodAsync(onMessageMethod, e.data);
+        };
 
-  // Alias so Blazor can call openLog()
-  openLog: function (dotnetObj, url) {
-    this.open(dotnetObj, url);
-  },
+        source.onerror = (err) => {
+            console.error(`Error from ${url}`, err);
+            dotnetObj.invokeMethodAsync(onErrorMethod, err?.message || 'Unknown error');
+            source.close();
+        };
 
-  close: function () {
-    console.log("logStream.close");
-    this._closeSource(this._logSource);
-    this._logSource = null;
-  },
-
-  // Alias so Blazor can call closeLog()
-  closeLog: function () {
-    this.close();
-  },
-
-  // --- Status stream methods ---
-
-  openStatus: function (dotnetObj, url) {
-    console.log("logStream.openStatus", url);
-    this.closeStatus();
-    this._statusSource = this._createEventSource(
-      url,
-      dotnetObj,
-      'ReceiveStatus',
-      'StatusError',
-      () => dotnetObj.invokeMethodAsync('StatusOpened')
-    );
-  },
-
-  closeStatus: function () {
-    console.log("logStream.closeStatus");
-    this._closeSource(this._statusSource);
-    this._statusSource = null;
-  },
-
-  // --- Shared helpers ---
-
-  _createEventSource: function (url, dotnetObj, onMessageMethod, onErrorMethod, onOpenCallback) {
-    const source = new EventSource(url);
-
-    source.onopen = () => {
-      console.log(`logStream: connected to ${url}`);
-      if (onOpenCallback) onOpenCallback();
-    };
-
-    source.onmessage = e => {
-      console.log("logStream message", e.data);
-      dotnetObj.invokeMethodAsync(onMessageMethod, e.data);
-    };
-
-    source.onerror = err => {
-      console.error(`logStream ${onErrorMethod}`, err);
-      dotnetObj.invokeMethodAsync(onErrorMethod, err?.message || 'Unknown error');
-      source.close();
-    };
-
-    return source;
-  },
-
-  _closeSource: function (source) {
-    if (source) {
-      try { source.close(); }
-      catch (e) { console.warn("Error closing EventSource", e); }
+        return source;
     }
-  },
 
-  // --- Optional reconnect methods ---
+    function closeEventSource(source) {
+        if (source) {
+            try {
+                source.close();
+            } catch (e) {
+                console.warn("Error closing EventSource", e);
+            }
+        }
+    }
 
-  reconnectLog: function (dotnetObj, url, delayMs = 2000) {
-    console.log("logStream.reconnectLog");
-    setTimeout(() => this.open(dotnetObj, url), delayMs);
-  },
+    // --- Service Log Stream ---
+    const serviceLogStream = {
+        _source: null,
 
-  reconnectStatus: function (dotnetObj, url, delayMs = 2000) {
-    console.log("logStream.reconnectStatus");
-    setTimeout(() => this.openStatus(dotnetObj, url), delayMs);
-  }
-};
+        open: function (dotnetObj, url) {
+            console.log("Service Log: Opening", url);
+            this.close();
+            this._source = createEventSource(
+                url,
+                dotnetObj,
+                'ReceiveLogChunk',
+                'LogError',
+                () => console.log("Service Log: Connected")
+            );
+        },
+
+        close: function () {
+            console.log("Service Log: Closing");
+            closeEventSource(this._source);
+            this._source = null;
+        },
+
+        reconnect: function (dotnetObj, url, delayMs = 2000) {
+            console.log("Service Log: Reconnecting");
+            setTimeout(() => this.open(dotnetObj, url), delayMs);
+        }
+    };
+
+    // --- Supervisor Log Stream ---
+    const supervisorLogStream = {
+        _source: null,
+
+        open: function (dotnetObj, url) {
+            console.log("Supervisor Log: Opening", url);
+            this.close();
+            this._source = createEventSource(
+                url,
+                dotnetObj,
+                'ReceiveSupervisorLogChunk',
+                'LogError',
+                () => console.log("Supervisor Log: Connected")
+            );
+        },
+
+        close: function () {
+            console.log("Supervisor Log: Closing");
+            closeEventSource(this._source);
+            this._source = null;
+        },
+
+        reconnect: function (dotnetObj, url, delayMs = 2000) {
+            console.log("Supervisor Log: Reconnecting");
+            setTimeout(() => this.open(dotnetObj, url), delayMs);
+        }
+    };
+
+    // --- Status Stream ---
+    const statusStream = {
+        _source: null,
+
+        open: function (dotnetObj, url) {
+            console.log("Status Stream: Opening", url);
+            this.close();
+            this._source = createEventSource(
+                url,
+                dotnetObj,
+                'ReceiveStatus',
+                'StatusError',
+                () => dotnetObj.invokeMethodAsync('StatusOpened')
+            );
+        },
+
+        close: function () {
+            console.log("Status Stream: Closing");
+            closeEventSource(this._source);
+            this._source = null;
+        },
+
+        reconnect: function (dotnetObj, url, delayMs = 2000) {
+            console.log("Status Stream: Reconnecting");
+            setTimeout(() => this.open(dotnetObj, url), delayMs);
+        }
+    };
+
+    // --- Public API ---
+    return {
+        serviceLog: serviceLogStream,
+        supervisorLog: supervisorLogStream,
+        status: statusStream
+    };
+})();

@@ -25,7 +25,8 @@ namespace Orchestrator.WebApi
             builder.Services.AddSingleton(cfg as IConfigurationLoader);
             var apiPort = OrchestratorConfig.Current.Web.ApiPort;
             builder.WebHost.ConfigureKestrel(opts =>
-                opts.ListenAnyIP(apiPort, listenOpts => listenOpts.UseHttps()));
+                opts.ListenAnyIP(apiPort));
+                //opts.ListenAnyIP(apiPort, listenOpts => listenOpts.UseHttps()));
 
             // 3) Register orchestrator services
             builder.Services.AddSingleton<ILogStreamService, LogStreamService>();
@@ -46,19 +47,31 @@ namespace Orchestrator.WebApi
                     Description = "HTTP API for managing supervised .NET services"
                 });
             });
+            // Disabled CORS for now
             builder.Services.AddCors(options =>
             {
-                options.AddDefaultPolicy(policy =>
+                options.AddPolicy("AllowAll", policy =>
+                {
                     policy
-                      .WithOrigins("https://localhost:5001", "http://localhost:5000")
-                      .AllowAnyHeader()
-                      .AllowAnyMethod()
-                      .AllowCredentials());
+                        .AllowAnyOrigin()    // allow requests from *any* host
+                        .AllowAnyMethod()    // allow GET, POST, PUT, DELETE, etc.
+                        .AllowAnyHeader();   // allow all headers
+                });
             });
-
+            /*
+                      builder.Services.AddCors(options =>
+                      {
+                          options.AddDefaultPolicy(policy =>
+                              policy
+                                .WithOrigins("https://localhost:5001", "http://localhost:5000")
+                                .AllowAnyHeader()
+                                .AllowAnyMethod()
+                                .AllowCredentials());
+                      });
+                      */
             // …
 
-       
+
             // 5) Build the app
             var app = builder.Build();
 
@@ -75,7 +88,7 @@ namespace Orchestrator.WebApi
             }
 
             app.UseRouting();
-            app.UseCors();
+            app.UseCors("AllowAll");
             app.MapControllers();
 
             // SSE log stream

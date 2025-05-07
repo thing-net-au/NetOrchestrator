@@ -3,6 +3,7 @@
     "WorkerApp": {
       "Name": "WorkerApp",
       "ExecutablePath": "apps/WorkerApp.dll",
+      "WorkingDirectory": "",
       "Arguments": "--env=prod --queue=tasks",
       "MinInstances": 2,
       "MaxInstances": 10,
@@ -16,6 +17,7 @@
     "QueueListener": {
       "Name": "QueueListener",
       "ExecutablePath": "apps/QueueListener.dll",
+      "WorkingDirectory": "",
       "Arguments": "--env=prod",
       "MinInstances": 1,
       "MaxInstances": 2,

@@ -6,8 +6,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>dotnet-Orchestrator-b9aa0732-efa5-4004-b79f-f98e5948979c</UserSecretsId>
   </PropertyGroup>
+	<ItemGroup Condition="'$(Configuration)'=='Release'">
+		<Content Update="**\orchestrator.json">
+			<CopyToPublishDirectory>Never</CopyToPublishDirectory>
+		</Content>
+	</ItemGroup>
 
-  <ItemGroup>
+	<ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Core" Version="2.3.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="8.0.1" />
