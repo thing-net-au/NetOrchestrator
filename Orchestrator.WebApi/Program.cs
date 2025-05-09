@@ -1,13 +1,14 @@
+using System;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.OpenApi.Models;
-using Orchestrator.Core;
-using Orchestrator.Core.Interfaces;
-using Orchestrator.Supervisor;
-using Orchestrator.Scheduler;
 using Orchestrator.IPC;
+using Orchestrator.Core.Interfaces;
 using Orchestrator.Core.Models;
+using Orchestrator.Supervisor;
+using Microsoft.Extensions.Options;
 
 namespace Orchestrator.WebApi
 {
@@ -15,104 +16,99 @@ namespace Orchestrator.WebApi
     {
         public static void Main(string[] args)
         {
-            // 1) Create the builder
+            // 0) Ensure correct working folder
+            var exeFolder = AppContext.BaseDirectory;
+            Directory.SetCurrentDirectory(exeFolder);
+
             var builder = WebApplication.CreateBuilder(args);
 
-            // 2) Load JSON config
-            builder.Configuration.AddJsonFile("orchestrator.json", optional: false, reloadOnChange: true);
-            var cfg = new OrchestratorConfig();
-            cfg.Load(builder.Configuration);
-            builder.Services.AddSingleton(cfg as IConfigurationLoader);
-            var apiPort = OrchestratorConfig.Current.Web.ApiPort;
-            builder.WebHost.ConfigureKestrel(opts =>
-                opts.ListenAnyIP(apiPort));
-                //opts.ListenAnyIP(apiPort, listenOpts => listenOpts.UseHttps()));
+            // 1) Load orchestrator.json via IConfiguration
+            builder.Configuration
+                   .SetBasePath(exeFolder)
+                   .AddJsonFile("orchestrator.json", optional: false, reloadOnChange: true);
 
-            // 3) Register orchestrator services
+            // Bind IPC settings (Host, LogPort, StatusPort)
+            builder.Services.Configure<IpcSettings>(builder.Configuration.GetSection("Ipc"));
+
+            // 2) Core & in-memory log broker
             builder.Services.AddSingleton<ILogStreamService, LogStreamService>();
-            builder.Services.AddSingleton<IProcessSupervisor, ProcessSupervisor>();
-            builder.Services.AddSingleton<IIpcServer, IpcServer>();
-            builder.Services.AddHostedService<PolicyScheduler>();
-            builder.Services.AddHostedService<IpcBackgroundService>();
 
-            // 4) Add controllers + Swagger
+            // 3) Host the WorkerStatus TCP/JSON server
+            builder.Services.AddSingleton<TcpJsonServer<WorkerStatus>>(sp =>
+            {
+                var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
+                var server = new TcpJsonServer<WorkerStatus>(opts.Host, opts.LogPort, replayCount: 50);
+                server.MessageReceived += status =>
+                {
+                    // on each incoming WorkerStatus, push into the in-memory log stream
+                    var logs = sp.GetRequiredService<ILogStreamService>();
+                    logs.Push(status.ServiceName, status.ToJson());
+                };
+                server.Start();
+                return server;
+            });
+
+            // 4) Host the InternalStatus TCP/JSON server
+            builder.Services.AddSingleton<TcpJsonServer<InternalStatus>>(sp =>
+            {
+                var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
+                var server = new TcpJsonServer<InternalStatus>(opts.Host, opts.StatusPort, replayCount: 50);
+                server.MessageReceived += istat =>
+                {
+                    var logs = sp.GetRequiredService<ILogStreamService>();
+                    logs.Push("InternalStatus", istat.ToJson());
+                };
+                server.Start();
+                return server;
+            });
+
+            // 5) Supervisor & controllers
+            builder.Services.AddSingleton<IProcessSupervisor, ProcessSupervisor>();
             builder.Services.AddControllers();
+
+            // 6) Swagger & CORS
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen(c =>
-            {
-                c.SwaggerDoc("v1", new OpenApiInfo
-                {
-                    Title = "Orchestrator API",
-                    Version = "v1",
-                    Description = "HTTP API for managing supervised .NET services"
-                });
-            });
-            // Disabled CORS for now
-            builder.Services.AddCors(options =>
-            {
-                options.AddPolicy("AllowAll", policy =>
-                {
-                    policy
-                        .AllowAnyOrigin()    // allow requests from *any* host
-                        .AllowAnyMethod()    // allow GET, POST, PUT, DELETE, etc.
-                        .AllowAnyHeader();   // allow all headers
-                });
-            });
-            /*
-                      builder.Services.AddCors(options =>
-                      {
-                          options.AddDefaultPolicy(policy =>
-                              policy
-                                .WithOrigins("https://localhost:5001", "http://localhost:5000")
-                                .AllowAnyHeader()
-                                .AllowAnyMethod()
-                                .AllowCredentials());
-                      });
-                      */
-            // …
+                c.SwaggerDoc("v1", new OpenApiInfo { Title = "Orchestrator API", Version = "v1" }));
+            builder.Services.AddCors(opts =>
+                opts.AddPolicy("AllowAll", p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
 
-
-            // 5) Build the app
+            // 7) Build & middleware pipeline
             var app = builder.Build();
 
-            // 6) Middleware pipeline
+            app.UseCors("AllowAll");
             if (app.Environment.IsDevelopment())
             {
                 app.UseDeveloperExceptionPage();
                 app.UseSwagger();
                 app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "Orchestrator API V1"));
             }
-            else
-            {
-                app.UseExceptionHandler("/Error");
-            }
 
             app.UseRouting();
-            app.UseCors("AllowAll");
             app.MapControllers();
 
-            // SSE log stream
-            app.MapGet("/api/services/{name}/logs/stream", async context =>
+            // 8) SSE endpoints driven by the in-memory LogStreamService
+            app.MapGet("/api/services/{name}/logs/stream", async ctx =>
             {
-                var name = (string)context.Request.RouteValues["name"]!;
-                var logs = context.RequestServices.GetRequiredService<ILogStreamService>();
-                context.Response.Headers.Add("Content-Type", "text/event-stream");
+                var name = (string)ctx.Request.RouteValues["name"]!;
+                var logs = ctx.RequestServices.GetRequiredService<ILogStreamService>();
+                ctx.Response.Headers.Add("Content-Type", "text/event-stream");
                 await foreach (var line in logs.StreamAsync(name))
-                    await context.Response.WriteAsync($"data: {line}\n\n");
+                    await ctx.Response.WriteAsync($"data: {line}\n\n");
             });
-            app.MapGet("/api/status/stream", async context =>
+            app.MapGet("/api/status/stream", async ctx =>
             {
-                var log = context.RequestServices.GetRequiredService<ILogStreamService>();
-                context.Response.Headers.Add("Content-Type", "text/event-stream");
-                await foreach (var json in log.StreamAsync("InternalStatus"))
+                var logs = ctx.RequestServices.GetRequiredService<ILogStreamService>();
+                ctx.Response.Headers.Add("Content-Type", "text/event-stream");
+                await foreach (var json in logs.StreamAsync("InternalStatus"))
                 {
-                    // each json is a serialized InternalStatus
-                    await context.Response.WriteAsync($"data: {json}\n\n");
-                    await context.Response.Body.FlushAsync();
+                    await ctx.Response.WriteAsync($"data: {json}\n\n");
+                    await ctx.Response.Body.FlushAsync();
                 }
             });
-            // 7) Run
+
             app.Run();
         }
     }
+
 }

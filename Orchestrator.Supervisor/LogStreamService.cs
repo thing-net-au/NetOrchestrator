@@ -14,31 +14,60 @@ namespace Orchestrator.Supervisor
     /// <summary>
     /// Streams log messages from processes to connected clients.
     /// </summary>
-    public class LogStreamService : ILogStreamService
+    public class LogStreamService : ILogStreamService, IAsyncDisposable
     {
-        private readonly ConcurrentDictionary<string, Channel<string>> _channels = new();
+        private record ChannelInfo(Channel<string> Chan, FixedSizedQueue<string> History);
 
-        /// <inheritdoc />
+        private readonly ConcurrentDictionary<string, ChannelInfo> _channels = new();
+
         public void Push(string serviceName, string message)
         {
             if (message == null) return;
-            var channel = _channels.GetOrAdd(serviceName, _ => Channel.CreateUnbounded<string>());
-            channel.Writer.TryWrite(message);
+
+            var info = _channels.GetOrAdd(serviceName, _ =>
+            {
+                var options = new BoundedChannelOptions(1000)
+                {
+                    SingleReader = false,
+                    SingleWriter = false,
+                    FullMode = BoundedChannelFullMode.Wait
+                };
+                return new ChannelInfo(
+                    Channel.CreateBounded<string>(options),
+                    new FixedSizedQueue<string>(100)
+                );
+            });
+
+            // save history
+            info.History.Enqueue(message);
+            // push to channel
+            info.Chan.Writer.TryWrite(message);
         }
 
-        /// <inheritdoc />
         public async IAsyncEnumerable<string> StreamAsync(string serviceName)
         {
-            var channel = _channels.GetOrAdd(serviceName, _ => Channel.CreateUnbounded<string>());
-            while (await channel.Reader.WaitToReadAsync())
+            if (_channels.TryGetValue(serviceName, out var info))
             {
-                while (channel.Reader.TryRead(out var msg))
-                {
+                // replay
+                foreach (var msg in info.History.Items)
                     yield return msg;
+
+                // live
+                var reader = info.Chan.Reader;
+                while (await reader.WaitToReadAsync())
+                {
+                    while (reader.TryRead(out var msg))
+                        yield return msg;
                 }
             }
         }
+
+        public ValueTask DisposeAsync()
+        {
+            foreach (var info in _channels.Values)
+                info.Chan.Writer.Complete();
+            return ValueTask.CompletedTask;
+        }
     }
 
- 
 }

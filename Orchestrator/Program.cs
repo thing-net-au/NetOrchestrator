@@ -1,70 +1,63 @@
-using System;
-using Microsoft.AspNetCore.Builder;
+ï»¿using System;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Orchestrator.Core;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Orchestrator.Core.Interfaces;
-using Orchestrator.IPC;
-using Orchestrator.Scheduler;
+using Orchestrator.Core.Models;
 using Orchestrator.Supervisor;
-using Scrutor;
+using Orchestrator.Scheduler;
+using Orchestrator.IPC;
 
 namespace Orchestrator
 {
-    public class Program
+    class Program
     {
         public static async Task Main(string[] args)
         {
-            await Host.CreateDefaultBuilder(args)
-                 .UseWindowsService()  // Windows service
-                 .UseSystemd()         // systemd on Linux
-                 .ConfigureAppConfiguration((ctx, cfg) =>
-                 {
-                     cfg.SetBasePath(AppContext.BaseDirectory)
-                        .AddJsonFile("orchestrator.json", optional: false, reloadOnChange: true);
-                 })
-                 .ConfigureServices((ctx, services) =>
-                 {
-                     // 1) bind config
-                     var c = new OrchestratorConfig();
-                     c.Load(ctx.Configuration);
-                     services.AddSingleton<IConfigurationLoader>(c);
+            var exeFolder = AppContext.BaseDirectory;
+            Directory.SetCurrentDirectory(exeFolder);
 
-                     // 2) core & supervisor
-                     services.AddSingleton<ILogStreamService, LogStreamService>();
-                     services.AddSingleton<IProcessSupervisor, ProcessSupervisor>();
-                     services.AddSingleton<IIpcServer, IpcServer>();
+            var config = new ConfigurationBuilder()
+                .SetBasePath(exeFolder)
+                .AddJsonFile("orchestrator.json", optional: false, reloadOnChange: true)
+                .Build();
 
-                     // 3) background workers
-                     // Make sure your scheduler and supervisor implement IInternalHealth:
-                     services.AddSingleton<IInternalHealth, PolicyScheduler>();
-                     //services.AddSingleton<IInternalHealth, ProcessSupervisor>();
+            var services = new ServiceCollection()
+                .AddLogging(lb => lb.AddSimpleConsole().SetMinimumLevel(LogLevel.Information))
+                .AddSingleton<IConfiguration>(config)
 
-                     services.AddHostedService<PolicyScheduler>();
-                     services.AddHostedService<IpcBackgroundService>();
+                // Core health providers
+                .AddSingleton<IInternalHealth, PolicyScheduler>()
+                // â€¦any other IInternalHealthâ€¦
 
-                     // 4) kick off initial processes
-                     services.AddHostedService<InitialProcessLauncher>();
-                     services.AddHostedService<Worker>();
+                // Bind your new IpcSettings
+                .Configure<IpcSettings>(config.GetSection("Ipc"))
 
-                     services.Scan(scan => scan
-    // Scan the host assembly…
-    .FromAssemblyOf<Program>()
-    // …and the scheduler assembly
-    .FromAssemblyOf<Orchestrator.Scheduler.PolicyScheduler>()
-    // …and the supervisor assembly
-    .FromAssemblyOf<Orchestrator.Supervisor.ProcessSupervisor>()
-    // Then pick up those that implement IInternalHealth
-    .AddClasses(classes => classes.AssignableTo<IInternalHealth>())
-    .AsImplementedInterfaces()
-    .WithSingletonLifetime()
-);
+                // Register the concrete BasicIpcClient
+                .AddSingleton(sp => {
+                    var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
+                    return new BasicIpcClient(
+                        token => TransportFactories.NamedPipeStreamFactory(opts.Endpoint, token)
+                    );
+                })
 
-                 })
-                    .Build()
-                 .RunAsync();
+                // Register your Worker (now taking BasicIpcClient)
+                .AddSingleton<Worker>();
 
+            using var provider = services.BuildServiceProvider();
+            var logger = provider.GetRequiredService<ILogger<Program>>();
+            var worker = provider.GetRequiredService<Worker>();
+
+            logger.LogInformation("Console host starting");
+            using var cts = new CancellationTokenSource();
+            Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
+            await worker.RunAsync(cts.Token);
+            logger.LogInformation("Console host exiting");
         }
     }
 }

@@ -1,7 +1,9 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Core.Interfaces;
 using Orchestrator.Core.Models;
-using Orchestrator.IPC;
 
 namespace Orchestrator.WebApi.Controllers
 {
@@ -10,56 +12,47 @@ namespace Orchestrator.WebApi.Controllers
     public class ServicesController : ControllerBase
     {
         private readonly IProcessSupervisor _supervisor;
+        private readonly IEnumerable<IInternalHealth> _healthProviders;
 
-        public ServicesController(IProcessSupervisor supervisor)
-            => _supervisor = supervisor;
+        public ServicesController(
+            IProcessSupervisor supervisor,
+            IEnumerable<IInternalHealth> healthProviders)
+        {
+            _supervisor = supervisor;
+            _healthProviders = healthProviders;
+        }
 
-        // GET /api/services
+        /// <summary>
+        /// GET /api/services
+        /// List configured services with their current running/stopped state.
+        /// </summary>
         [HttpGet]
-        public async Task<IEnumerable<ServiceStatus>> GetAll()
-        {
-            return await _supervisor.ListStatusAsync();
-        }
+        public Task<IEnumerable<ServiceStatus>> GetAll()
+            => _supervisor.ListStatusAsync();
 
-        // In ServicesController.cs
-        [HttpGet("{name}/status")]
-        public IEnumerable<WorkerStatus> GetWorkerStatuses(string name)
-        {
-            var ipc = HttpContext.RequestServices.GetRequiredService<IIpcServer>() as IpcServer;
-            return ipc?.GetLatestStatuses(name) ?? Enumerable.Empty<WorkerStatus>();
-        }
-
-        // POST /api/services/{name}/start
+        /// <summary>
+        /// POST /api/services/{name}/start
+        /// Start one instance of the named service.
+        /// </summary>
         [HttpPost("{name}/start")]
         public Task Start(string name)
             => _supervisor.StartAsync(name);
 
-        // POST /api/services/{name}/stop
+        /// <summary>
+        /// POST /api/services/{name}/stop
+        /// Stop one instance of the named service.
+        /// </summary>
         [HttpPost("{name}/stop")]
         public Task Stop(string name)
             => _supervisor.StopAsync(name);
-        // in ServicesController.cs
 
-        [HttpPost("report")]
-        public async Task Report([FromBody] WorkerStatus status)
-        {
-            var ipc = HttpContext.RequestServices.GetRequiredService<IIpcServer>();
-            await ipc.ReportStatus(status);
-        }
-
-        // existing code…
-
-        // GET /api/services/internal
+        /// <summary>
+        /// GET /api/services/internal
+        /// Snapshot of all internal health providers.
+        /// (For real‐time updates, use SSE on /api/status/stream.)
+        /// </summary>
         [HttpGet("internal")]
         public IEnumerable<InternalStatus> GetInternalStatuses()
-        {
-            var ipc = HttpContext.RequestServices.GetRequiredService<IIpcServer>() as IpcServer;
-            return ipc?.GetInternalStatuses() ?? Enumerable.Empty<InternalStatus>();
-
-            var all = HttpContext.RequestServices.GetServices<IInternalHealth>();
-            return all.Select(s => s.GetStatus());
-        }
-
+            => _healthProviders.Select(h => h.GetStatus());
     }
-
 }

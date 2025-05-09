@@ -12,7 +12,14 @@ namespace Orchestrator.WebUI
     {
         public static void Main(string[] args)
         {
+            var exeFolder = AppContext.BaseDirectory;
+            Directory.SetCurrentDirectory(exeFolder);
+
             var builder = WebApplication.CreateBuilder(args);
+            // Add support for Windows and systemd services
+            builder.Host.UseWindowsService();
+            builder.Host.UseSystemd();
+
 
             // 1) Load your orchestrator.json
             builder.Configuration

@@ -21,14 +21,16 @@ namespace Orchestrator.Supervisor
     {
         private readonly ConcurrentDictionary<string, List<Process>> _processes = new();
         private readonly ILogStreamService _logStream;
+        private readonly OrchestratorConfig _config;
 
         public ProcessSupervisor(ILogStreamService logStream)
         {
             _logStream = logStream;
+            _config = new OrchestratorConfig();
         }
 
         /// <inheritdoc />
-public Task StartAsync(string serviceName, int count = 1)
+        public Task StartAsync(string serviceName, int count = 1)
         {
             if (!OrchestratorConfig.Current.Services.TryGetValue(serviceName, out var cfg))
                 throw new ArgumentException($"Service '{serviceName}' is not configured.");
@@ -46,7 +48,7 @@ public Task StartAsync(string serviceName, int count = 1)
                 if (!string.IsNullOrEmpty(cfg.WorkingDirectory))
                     psi.WorkingDirectory = cfg.WorkingDirectory;
                 var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
-    
+
                 // hook exit
                 proc.Exited += (sender, args) =>
                 {
@@ -59,7 +61,7 @@ public Task StartAsync(string serviceName, int count = 1)
                     Thread.Sleep(60000);
 
                     // remove from our list
-                    if(list.Contains(proc))
+                    if (list.Contains(proc))
                         list.Remove(proc);
 
 
@@ -82,7 +84,7 @@ public Task StartAsync(string serviceName, int count = 1)
             return Task.CompletedTask;
         }
 
-        
+
 
         /// <inheritdoc />
         public Task StopAsync(string serviceName, int count = 1)
@@ -132,10 +134,8 @@ public Task StartAsync(string serviceName, int count = 1)
                     LastReportAt = DateTime.UtcNow
                 };
             });
-
             return Task.FromResult(statuses);
         }
-
         /// <summary>
         /// Serializes and pushes the current status of a service to the log stream.
         /// </summary>
