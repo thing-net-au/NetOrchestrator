@@ -1,7 +1,7 @@
 using System;
 using System.Text.Json;
 using System.Threading.Tasks;
-using ThingNet.IPC;
+using Orchestrator.IPC;
 
 // Define your data contract
 public class ThisObj

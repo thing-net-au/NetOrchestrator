@@ -12,6 +12,8 @@ namespace Orchestrator.Core.Models
         public string Host { get; set; } = "127.0.0.1";
         public int LogPort { get; set; }
         public int StatusPort { get; set; }
+        public int HistorySize { get; set; } = 100;
+        public int ConnectTimeoutMs { get; set; }
     }
 
 }

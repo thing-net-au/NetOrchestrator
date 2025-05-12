@@ -2,16 +2,20 @@
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Orchestrator.Core.Interfaces;
 using Orchestrator.Core.Models;
 using Orchestrator.IPC;
 
 namespace Orchestrator
 {
+    /// <summary>
+    /// Worker runs as a hosted background service.
+    /// It publishes WorkerStatus and InternalStatus over TCP/JSON every second.
+    /// </summary>
     public class Worker : BackgroundService
     {
         private readonly ILogger<Worker> _logger;
@@ -23,58 +27,56 @@ namespace Orchestrator
 
         public Worker(
             ILogger<Worker> logger,
-            IOptions<IpcSettings> ipcOpts,
+            TcpJsonClient<WorkerStatus> logClient,
+            TcpJsonClient<InternalStatus> statusClient,
             IEnumerable<IInternalHealth> healthProviders)
         {
             _logger = logger;
+            _logClient = logClient;
+            _statusClient = statusClient;
             _healthProviders = healthProviders;
             _pid = Environment.ProcessId;
             _startTime = DateTimeOffset.UtcNow;
-
-            var opts = ipcOpts.Value;
-            _logClient = new TcpJsonClient<WorkerStatus>(opts.Host, opts.LogPort);
-            _statusClient = new TcpJsonClient<InternalStatus>(opts.Host, opts.StatusPort);
         }
 
         public override async Task StartAsync(CancellationToken cancellationToken)
         {
             _logger.LogInformation("Worker starting (pid={Pid})", _pid);
-
-            // Retry connect until both servers are up
-            await ConnectWithRetry(_logClient, "log", cancellationToken);
-            await ConnectWithRetry(_statusClient, "status", cancellationToken);
-
+            await RetryConnect(_logClient, "log", cancellationToken);
+            await RetryConnect(_statusClient, "status", cancellationToken);
             await base.StartAsync(cancellationToken);
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("Worker.ExecuteAsync running ticks every 1s");
-
+            _logger.LogInformation("Worker tick loop entering");
             while (!stoppingToken.IsCancellationRequested)
             {
                 var now = DateTimeOffset.UtcNow;
 
-                // 1) publish WorkerStatus
+                
+                // 1) WorkerStatus
+
+
+
                 var ws = new WorkerStatus
                 {
                     ServiceName = "Worker",
                     ProcessId = _pid,
                     Timestamp = now.UtcDateTime,
-                    Message = $"Worker running at: {now:O}"
+                    Message = $"Tick at {now:O}"
                 };
                 await _logClient.SendAsync(ws);
 
-                // 2) publish InternalStatus ticks
+                // 2) InternalStatus
                 foreach (var health in _healthProviders)
                 {
                     var ist = health.GetStatus();
-                    // ensure Timestamp is set
                     ist.Timestamp = DateTime.UtcNow;
                     await _statusClient.SendAsync(ist);
                 }
 
-                // 3) heartbeat
+                // 3) Heartbeat
                 var hb = new WorkerStatus
                 {
                     ServiceName = "HostHeartbeat",
@@ -90,41 +92,41 @@ namespace Orchestrator
 
                 await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
             }
-
-            _logger.LogInformation("Worker stopping ticks");
+            _logger.LogInformation("Worker tick loop exiting");
         }
 
         public override async Task StopAsync(CancellationToken cancellationToken)
         {
-            _logger.LogInformation("Worker stopping, disposing clients");
+            _logger.LogInformation("Worker stopping");
             _logClient.Dispose();
             _statusClient.Dispose();
             await base.StopAsync(cancellationToken);
         }
 
-        private async Task ConnectWithRetry<T>(
+        private async Task RetryConnect<T>(
             TcpJsonClient<T> client,
             string name,
             CancellationToken token)
         {
-            const int retryMs = 1000;
+            const int delayMs = 10000;
             while (!token.IsCancellationRequested)
             {
                 try
                 {
                     _logger.LogInformation("Connecting to {Name} server...", name);
-                    await client.ConnectAsync();
+                    await client.ConnectAsync(delayMs);
                     _logger.LogInformation("Connected to {Name} server", name);
                     return;
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to connect to {Name} server; retrying in {Ms}ms", name, retryMs);
-                    try { await Task.Delay(retryMs, token); }
+                    _logger.LogWarning(ex,
+                        "Failed to connect to {Name} server; retrying in {Delay}ms",
+                        name, delayMs);
+                    try { await Task.Delay(delayMs, token); }
                     catch (OperationCanceledException) { break; }
                 }
             }
-            token.ThrowIfCancellationRequested();
         }
     }
 }

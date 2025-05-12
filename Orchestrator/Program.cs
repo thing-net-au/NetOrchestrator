@@ -1,63 +1,112 @@
 ﻿using System;
 using System.IO;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Orchestrator.Core.Interfaces;
 using Orchestrator.Core.Models;
 using Orchestrator.Supervisor;
 using Orchestrator.Scheduler;
 using Orchestrator.IPC;
+using Orchestrator.Core;
+using Microsoft.Extensions.Options;    // for TcpJsonServer<T>, IpcSettings
 
 namespace Orchestrator
 {
-    class Program
+    internal class Program
     {
         public static async Task Main(string[] args)
         {
+            // 1) Ensure working directory is your exe folder
             var exeFolder = AppContext.BaseDirectory;
             Directory.SetCurrentDirectory(exeFolder);
 
-            var config = new ConfigurationBuilder()
-                .SetBasePath(exeFolder)
-                .AddJsonFile("orchestrator.json", optional: false, reloadOnChange: true)
-                .Build();
+            await Host.CreateDefaultBuilder(args)
+                // 2) Run as a true service
+                .UseWindowsService()
+                .UseSystemd()
 
-            var services = new ServiceCollection()
-                .AddLogging(lb => lb.AddSimpleConsole().SetMinimumLevel(LogLevel.Information))
-                .AddSingleton<IConfiguration>(config)
-
-                // Core health providers
-                .AddSingleton<IInternalHealth, PolicyScheduler>()
-                // …any other IInternalHealth…
-
-                // Bind your new IpcSettings
-                .Configure<IpcSettings>(config.GetSection("Ipc"))
-
-                // Register the concrete BasicIpcClient
-                .AddSingleton(sp => {
-                    var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
-                    return new BasicIpcClient(
-                        token => TransportFactories.NamedPipeStreamFactory(opts.Endpoint, token)
-                    );
+                // 3) Load orchestrator.json
+                .ConfigureAppConfiguration((ctx, cfg) =>
+                {
+                    cfg.SetBasePath(exeFolder)
+                       .AddJsonFile("orchestrator.json", optional: false, reloadOnChange: true);
                 })
 
-                // Register your Worker (now taking BasicIpcClient)
-                .AddSingleton<Worker>();
+                // 4) Register all services
+                .ConfigureServices((ctx, services) =>
+                {
+                    // in your Program.cs → ConfigureServices(...)
+                    services.AddOptions();                                         // 1) make Configure<T> work
+                    services.Configure<IpcSettings>(ctx.Configuration.GetSection("Ipc"));
 
-            using var provider = services.BuildServiceProvider();
-            var logger = provider.GetRequiredService<ILogger<Program>>();
-            var worker = provider.GetRequiredService<Worker>();
+                    services.AddSingleton<ILogStreamService, LogStreamService>();
+                    services.AddSingleton<IProcessSupervisor, ProcessSupervisor>();
+                    services.AddSingleton<IInternalHealth, PolicyScheduler>();
+                    services.AddHostedService<PolicyScheduler>();
 
-            logger.LogInformation("Console host starting");
-            using var cts = new CancellationTokenSource();
-            Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+                    // 2a) WorkerStatus server registration
+                    // inside ConfigureServices(…):
+                    services.AddSingleton<TcpJsonServer<WorkerStatus>>(sp =>
+                    {
+                        var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
+                        var srv = new TcpJsonServer<WorkerStatus>(
+                            opts.Host,
+                            opts.LogPort,
+                            replayCount: opts.HistorySize,
+                            historySize: opts.HistorySize
+                        );
+                        srv.MessageReceived += ws =>
+                            sp.GetRequiredService<ILogStreamService>()
+                              .Push(ws.ServiceName, JsonSerializer.Serialize(ws));
+                        return srv;
+                    });
+                    services.AddSingleton<IHostedService, TcpJsonServerHost<WorkerStatus>>();
 
-            await worker.RunAsync(cts.Token);
-            logger.LogInformation("Console host exiting");
+                    services.AddSingleton<TcpJsonServer<InternalStatus>>(sp =>
+                    {
+                        var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
+                        var srv = new TcpJsonServer<InternalStatus>(
+                            opts.Host,
+                            opts.StatusPort,
+                            replayCount: opts.HistorySize,
+                            historySize: opts.HistorySize
+                        );
+                        srv.MessageReceived += st =>
+                            sp.GetRequiredService<ILogStreamService>()
+                              .Push("InternalStatus", JsonSerializer.Serialize(st));
+                        return srv;
+                    });
+                    services.AddSingleton<IHostedService, TcpJsonServerHost<InternalStatus>>();
+
+                    // 2) Register the two TcpJsonClient<T> factories for WorkerStatus & InternalStatus:
+                    services.AddSingleton<TcpJsonClient<WorkerStatus>>(sp =>
+                    {
+                        var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
+                        return new TcpJsonClient<WorkerStatus>(opts.Host, opts.LogPort);
+                    });
+                    services.AddSingleton<TcpJsonClient<InternalStatus>>(sp =>
+                    {
+                        var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
+                        return new TcpJsonClient<InternalStatus>(opts.Host, opts.StatusPort);
+                    });
+                    // 3) finally register your Worker which will connect as a client to those two servers
+                    services.AddHostedService<Worker>();
+
+                })
+
+                // 5) Console logging (also goes to EventLog)
+                .ConfigureLogging((ctx, lb) =>
+                {
+                    lb.AddSimpleConsole(o => o.SingleLine = true)
+                      .AddEventLog()
+                      .SetMinimumLevel(LogLevel.Information);
+                })
+
+                // 6) Run until service stop
+                .RunConsoleAsync();
         }
     }
 }

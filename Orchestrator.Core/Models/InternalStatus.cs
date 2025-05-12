@@ -1,4 +1,5 @@
-﻿namespace Orchestrator.Core.Models
+﻿
+namespace Orchestrator.Core.Models
 {
     public class InternalStatus
     {
@@ -10,5 +11,6 @@
 
         /// <summary>Optional details or last run timestamp</summary>
         public string? Details { get; set; }
+        public DateTime Timestamp { get; set; }
     }
 }

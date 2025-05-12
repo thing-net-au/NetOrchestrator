@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,6 +9,7 @@ using Orchestrator.Core.Interfaces;
 using Orchestrator.Core.Models;
 using Orchestrator.Supervisor;
 using Microsoft.Extensions.Options;
+using System.Text.Json;
 
 namespace Orchestrator.WebApi
 {
@@ -20,60 +21,33 @@ namespace Orchestrator.WebApi
             var exeFolder = AppContext.BaseDirectory;
             Directory.SetCurrentDirectory(exeFolder);
 
+        
             var builder = WebApplication.CreateBuilder(args);
 
-            // 1) Load orchestrator.json via IConfiguration
+            // 0) work directory + config
             builder.Configuration
                    .SetBasePath(exeFolder)
                    .AddJsonFile("orchestrator.json", optional: false, reloadOnChange: true);
 
-            // Bind IPC settings (Host, LogPort, StatusPort)
+            // 1) bind IpcSettings
+            builder.Services.AddOptions();
             builder.Services.Configure<IpcSettings>(builder.Configuration.GetSection("Ipc"));
 
-            // 2) Core & in-memory log broker
+            // 2) in‐memory broker for SSE
             builder.Services.AddSingleton<ILogStreamService, LogStreamService>();
 
-            // 3) Host the WorkerStatus TCP/JSON server
-            builder.Services.AddSingleton<TcpJsonServer<WorkerStatus>>(sp =>
-            {
-                var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
-                var server = new TcpJsonServer<WorkerStatus>(opts.Host, opts.LogPort, replayCount: 50);
-                server.MessageReceived += status =>
-                {
-                    // on each incoming WorkerStatus, push into the in-memory log stream
-                    var logs = sp.GetRequiredService<ILogStreamService>();
-                    logs.Push(status.ServiceName, status.ToJson());
-                };
-                server.Start();
-                return server;
-            });
-
-            // 4) Host the InternalStatus TCP/JSON server
-            builder.Services.AddSingleton<TcpJsonServer<InternalStatus>>(sp =>
-            {
-                var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
-                var server = new TcpJsonServer<InternalStatus>(opts.Host, opts.StatusPort, replayCount: 50);
-                server.MessageReceived += istat =>
-                {
-                    var logs = sp.GetRequiredService<ILogStreamService>();
-                    logs.Push("InternalStatus", istat.ToJson());
-                };
-                server.Start();
-                return server;
-            });
-
-            // 5) Supervisor & controllers
+            // 3) supervisor (for your /api/services controller)
             builder.Services.AddSingleton<IProcessSupervisor, ProcessSupervisor>();
             builder.Services.AddControllers();
 
-            // 6) Swagger & CORS
-            builder.Services.AddEndpointsApiExplorer();
-            builder.Services.AddSwaggerGen(c =>
-                c.SwaggerDoc("v1", new OpenApiInfo { Title = "Orchestrator API", Version = "v1" }));
-            builder.Services.AddCors(opts =>
-                opts.AddPolicy("AllowAll", p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
+            // 4) our “startup” hosted service that spins up two TcpJsonClient<T>
+            builder.Services.AddHostedService<StartupJsonClients>();
 
-            // 7) Build & middleware pipeline
+            // 5) swagger + CORS
+            builder.Services.AddEndpointsApiExplorer();
+            builder.Services.AddSwaggerGen(c => c.SwaggerDoc("v1", new() { Title = "Orchestrator API", Version = "v1" }));
+            builder.Services.AddCors(o => o.AddPolicy("AllowAll", p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
+
             var app = builder.Build();
 
             app.UseCors("AllowAll");
@@ -84,10 +58,9 @@ namespace Orchestrator.WebApi
                 app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "Orchestrator API V1"));
             }
 
-            app.UseRouting();
             app.MapControllers();
 
-            // 8) SSE endpoints driven by the in-memory LogStreamService
+            // SSE for WorkerStatus
             app.MapGet("/api/services/{name}/logs/stream", async ctx =>
             {
                 var name = (string)ctx.Request.RouteValues["name"]!;
@@ -96,6 +69,8 @@ namespace Orchestrator.WebApi
                 await foreach (var line in logs.StreamAsync(name))
                     await ctx.Response.WriteAsync($"data: {line}\n\n");
             });
+
+            // SSE for InternalStatus
             app.MapGet("/api/status/stream", async ctx =>
             {
                 var logs = ctx.RequestServices.GetRequiredService<ILogStreamService>();
@@ -108,6 +83,8 @@ namespace Orchestrator.WebApi
             });
 
             app.Run();
+
+
         }
     }
 

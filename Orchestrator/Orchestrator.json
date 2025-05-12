@@ -45,8 +45,8 @@
     "StreamBufferSize": 8192
   },
   "Ipc": {
-    "Transport": "NamedPipe", // or "UnixDomainSocket" / "Tcp"
-    "Endpoint": "orch-ipc-pipe", // e.g. pipe name or socket file path
-    "Port": 0 // only for TCP
+    "Host": "127.0.0.1",
+    "LogPort": 6000,
+    "StatusPort": 6001
   }
 }

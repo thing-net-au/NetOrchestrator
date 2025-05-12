@@ -1,6 +1,8 @@
-﻿using System;
+﻿using Microsoft.Extensions.Hosting;
+using System;
 using System.Collections.Concurrent;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -21,13 +23,16 @@ namespace Orchestrator.IPC
     public class MessageQueue<T>
     {
         private readonly ConcurrentQueue<T> _queue = new ConcurrentQueue<T>();
-        private readonly int _max;
+        private int _max;
+
         public MessageQueue(int maxHistory) => _max = maxHistory;
+
         public void Enqueue(T item)
         {
             _queue.Enqueue(item);
             while (_queue.Count > _max && _queue.TryDequeue(out _)) { }
         }
+
         public T[] GetHistory(int count)
         {
             var arr = _queue.ToArray();
@@ -36,6 +41,16 @@ namespace Orchestrator.IPC
             Array.Copy(arr, arr.Length - take, res, 0, take);
             return res;
         }
+
+        /// <summary>
+        /// Change the maximum number of messages kept in history.
+        /// </summary>
+        public void SetMaxHistory(int maxHistory)
+        {
+            _max = maxHistory;
+            // Optionally trim if current count > new max:
+            while (_queue.Count > _max && _queue.TryDequeue(out _)) { }
+        }
     }
 
     public class TcpJsonServer<T>
@@ -43,8 +58,8 @@ namespace Orchestrator.IPC
         private readonly IPAddress _address;
         private readonly int _port;
         private readonly TcpListener _listener;
-        private readonly MessageQueue<T> _history;
-        private readonly int _replayCount;
+        private MessageQueue<T> _history;
+        private int _replayCount;
         private readonly ConcurrentDictionary<int, (TcpClient Client, StreamWriter Writer)> _clients = new();
         private int _nextId;
         private bool _running;
@@ -85,6 +100,7 @@ namespace Orchestrator.IPC
             {
                 var client = await _listener.AcceptTcpClientAsync();
                 int id = Interlocked.Increment(ref _nextId);
+
                 var stream = client.GetStream();
                 var reader = new StreamReader(stream);
                 var writer = new StreamWriter(stream) { AutoFlush = true };
@@ -111,7 +127,10 @@ namespace Orchestrator.IPC
                     await BroadcastAsync(msg);
                 }
             }
-            catch { }
+            catch
+            {
+                // swallow
+            }
             finally
             {
                 if (_clients.TryRemove(id, out var kv))
@@ -137,6 +156,22 @@ namespace Orchestrator.IPC
                     _clients.TryRemove(kv.Key, out _);
                 }
             }
+        }
+
+        /// <summary>
+        /// Adjust how many messages to replay on new connections.
+        /// </summary>
+        public void SetReplayCount(int replayCount)
+        {
+            _replayCount = replayCount;
+        }
+
+        /// <summary>
+        /// Adjust how many messages are kept in history.
+        /// </summary>
+        public void SetHistorySize(int historySize)
+        {
+            _history.SetMaxHistory(historySize);
         }
     }
 
@@ -178,7 +213,10 @@ namespace Orchestrator.IPC
                     MessageReceived?.Invoke(msg);
                 }
             }
-            catch { }
+            catch
+            {
+                // swallow
+            }
         }
 
         public async Task SendAsync(T message)
@@ -193,6 +231,32 @@ namespace Orchestrator.IPC
             _writer?.Dispose();
             _reader?.Dispose();
             _client?.Close();
+        }
+    }
+    /// <summary>
+    /// Wraps a TcpJsonServer<T> so that it is started/stopped as an IHostedService.
+    /// </summary>
+    public class TcpJsonServerHost<T> : IHostedService
+    {
+        private readonly TcpJsonServer<T> _server;
+
+        public TcpJsonServerHost(TcpJsonServer<T> server)
+        {
+            _server = server;
+        }
+
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            // ensure the server is started
+            _server.Start();
+            return Task.CompletedTask;
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken)
+        {
+            // gracefully stop
+            _server.Stop();
+            return Task.CompletedTask;
         }
     }
 }
