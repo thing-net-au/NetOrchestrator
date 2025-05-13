@@ -49,6 +49,14 @@ namespace Orchestrator.Core
         public SchedulingConfig Scheduling { get; set; }
         public WebConfig Web { get; set; }
 
+        public IEnumerable<string> GetConfiguredServices()
+        {
+            IEnumerable<string> InternalServices = new[] { "_supervisor" };
+            IEnumerable<string> ConfiguredServices = Services?.Keys ?? Enumerable.Empty<string>();
+
+            return InternalServices.Concat(ConfiguredServices);
+        }
+
         /// <summary>
         /// Called during DI startup to bind IConfiguration into this instance.
         /// This will override the static Current.

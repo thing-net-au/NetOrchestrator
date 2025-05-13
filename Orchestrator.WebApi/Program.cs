@@ -10,6 +10,7 @@ using Orchestrator.Core.Models;
 using Orchestrator.Supervisor;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
+using Orchestrator.Core;
 
 namespace Orchestrator.WebApi
 {
@@ -21,8 +22,13 @@ namespace Orchestrator.WebApi
             var exeFolder = AppContext.BaseDirectory;
             Directory.SetCurrentDirectory(exeFolder);
 
-        
+
             var builder = WebApplication.CreateBuilder(args);
+
+            // 1) Run as a service under Windows or systemd
+            builder.Host
+                   .UseWindowsService()
+                   .UseSystemd();
 
             // 0) work directory + config
             builder.Configuration
@@ -34,7 +40,7 @@ namespace Orchestrator.WebApi
             builder.Services.Configure<IpcSettings>(builder.Configuration.GetSection("Ipc"));
 
             // 2) in‐memory broker for SSE
-            builder.Services.AddSingleton<ILogStreamService, LogStreamService>();
+            builder.Services.AddSingleton<IEnvelopeStreamService, LogStreamService>();
 
             // 3) supervisor (for your /api/services controller)
             builder.Services.AddSingleton<IProcessSupervisor, ProcessSupervisor>();
@@ -47,6 +53,10 @@ namespace Orchestrator.WebApi
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen(c => c.SwaggerDoc("v1", new() { Title = "Orchestrator API", Version = "v1" }));
             builder.Services.AddCors(o => o.AddPolicy("AllowAll", p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
+
+            builder.WebHost.ConfigureKestrel(opts =>
+            opts.ListenAnyIP(OrchestratorConfig.Current.Web.ApiPort));
+            //opts.ListenAnyIP(OrchestratorConfig.Current.Web.UiPort, listen => listen.UseHttps()));
 
             var app = builder.Build();
 
@@ -64,16 +74,20 @@ namespace Orchestrator.WebApi
             app.MapGet("/api/services/{name}/logs/stream", async ctx =>
             {
                 var name = (string)ctx.Request.RouteValues["name"]!;
-                var logs = ctx.RequestServices.GetRequiredService<ILogStreamService>();
+                var logs = ctx.RequestServices.GetRequiredService<IEnvelopeStreamService>();
                 ctx.Response.Headers.Add("Content-Type", "text/event-stream");
-                await foreach (var line in logs.StreamAsync(name))
-                    await ctx.Response.WriteAsync($"data: {line}\n\n");
+
+                await foreach (var ws in logs.StreamAsync<WorkerStatus>(name))
+                {
+                    var json = JsonSerializer.Serialize(ws);
+                    await ctx.Response.WriteAsync($"data: {json}\n\n");
+                }
             });
 
             // SSE for InternalStatus
             app.MapGet("/api/status/stream", async ctx =>
             {
-                var logs = ctx.RequestServices.GetRequiredService<ILogStreamService>();
+                var logs = ctx.RequestServices.GetRequiredService<IEnvelopeStreamService>();
                 ctx.Response.Headers.Add("Content-Type", "text/event-stream");
                 await foreach (var json in logs.StreamAsync("InternalStatus"))
                 {

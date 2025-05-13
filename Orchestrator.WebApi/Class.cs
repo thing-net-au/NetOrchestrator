@@ -18,7 +18,7 @@ namespace Orchestrator.WebApi
     /// </summary>
     public class StartupJsonClients : IHostedService, IDisposable
     {
-        private readonly ILogStreamService _logs;
+        private readonly IEnvelopeStreamService _logs;
         private readonly ILogger<StartupJsonClients> _logger;
         private readonly IOptions<IpcSettings> _opts;
         private TcpJsonClient<WorkerStatus> _logClient;
@@ -27,7 +27,7 @@ namespace Orchestrator.WebApi
         private CancellationTokenSource _cts;
 
         public StartupJsonClients(
-            ILogStreamService logs,
+            IEnvelopeStreamService logs,
             ILogger<StartupJsonClients> logger,
             IOptions<IpcSettings> opts)
         {

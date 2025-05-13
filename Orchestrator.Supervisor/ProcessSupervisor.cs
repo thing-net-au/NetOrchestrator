@@ -1,12 +1,11 @@
-﻿// Project: Orchestrator.Supervisor (Class Library)
-// References: Orchestrator.Core, System.Threading.Channels, System.Text.Json
-
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Orchestrator.Core;
 using Orchestrator.Core.Interfaces;
@@ -17,19 +16,25 @@ namespace Orchestrator.Supervisor
     /// <summary>
     /// Supervises .NET processes: launch, monitor health, capture logs, and report status.
     /// </summary>
-    public class ProcessSupervisor : IProcessSupervisor
+    public class ProcessSupervisor : IProcessSupervisor, IInternalHealth
     {
         private readonly ConcurrentDictionary<string, List<Process>> _processes = new();
-        private readonly ILogStreamService _logStream;
+        private readonly IEnvelopeStreamService _envelopes;
         private readonly OrchestratorConfig _config;
 
-        public ProcessSupervisor(ILogStreamService logStream)
+        public ProcessSupervisor(IEnvelopeStreamService envelopes)
         {
-            _logStream = logStream;
+            _envelopes = envelopes;
             _config = new OrchestratorConfig();
         }
 
-        /// <inheritdoc />
+        public InternalStatus GetStatus() => new InternalStatus
+        {
+            Name = nameof(ProcessSupervisor),
+            IsHealthy = true,
+            Details = $"Tracking: {string.Join(", ", _processes.Keys)}"
+        };
+
         public Task StartAsync(string serviceName, int count = 1)
         {
             if (!OrchestratorConfig.Current.Services.TryGetValue(serviceName, out var cfg))
@@ -38,115 +43,153 @@ namespace Orchestrator.Supervisor
             var list = _processes.GetOrAdd(serviceName, _ => new List<Process>());
             for (int i = 0; i < count; i++)
             {
-                var psi = new ProcessStartInfo("dotnet", $"{cfg.ExecutablePath} {cfg.Arguments}")
+                // 1) check paths
+                if (!File.Exists(cfg.ExecutablePath))
                 {
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                if (!string.IsNullOrEmpty(cfg.WorkingDirectory))
-                    psi.WorkingDirectory = cfg.WorkingDirectory;
-                var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
-
-                // hook exit
-                proc.Exited += (sender, args) =>
+                    var msg = new ConsoleLogMessage
+                    {
+                        process = "_supervisor",
+                        processId = 0,
+                        message = $"Executable '{cfg.ExecutablePath}' not found."
+                    };
+                    _envelopes.Push("ConsoleLogMessage", msg);
+                    continue;
+                }
+                if (!string.IsNullOrEmpty(cfg.WorkingDirectory)
+                    && !Directory.Exists(cfg.WorkingDirectory))
                 {
-                    _logStream.Push("_supervisor", $"Process {proc.Id} exited with code {proc.ExitCode}");
-                    // push a log line if you like
-                    _logStream.Push(serviceName, $"Process {proc.Id} exited with code {proc.ExitCode}");
+                    var msg = new ConsoleLogMessage
+                    {
+                        process = "_supervisor",
+                        processId = 0,
+                        message = $"Working dir '{cfg.WorkingDirectory}' not found."
+                    };
+                    _envelopes.Push("ConsoleLogMessage", msg);
+                    continue;
+                }
 
-                    // report the updated service status (you'll need to implement this)
-                    ReportServiceStatus(serviceName);
-                    Thread.Sleep(60000);
+                try
+                {
+                    var psi = new ProcessStartInfo("dotnet", $"{cfg.ExecutablePath} {cfg.Arguments}")
+                    {
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        WorkingDirectory = cfg.WorkingDirectory ?? AppContext.BaseDirectory
+                    };
+                    var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
 
-                    // remove from our list
-                    if (list.Contains(proc))
+                    proc.Exited += (s, e) =>
+                    {
+                        _envelopes.Push("_supervisor", new ConsoleLogMessage
+                        {
+                            process = "_supervisor",
+                            processId = proc.Id,
+                            message = $"Process exited with code {proc.ExitCode}"
+                        });
+                        ReportServiceStatus(serviceName);
+                        Thread.Sleep(60_000);
                         list.Remove(proc);
+                    };
+                    proc.OutputDataReceived += (s, e) =>
+                        _envelopes.Push(serviceName, new ConsoleLogMessage
+                        {
+                            process = serviceName,
+                            processId = proc.Id,
+                            message = e.Data ?? string.Empty
+                        });
+                    proc.ErrorDataReceived += (s, e) =>
+                        _envelopes.Push(serviceName, new ConsoleLogMessage
+                        {
+                            process = serviceName,
+                            processId = proc.Id,
+                            message = e.Data ?? string.Empty
+                        });
 
+                    _envelopes.Push("_supervisor", new ConsoleLogMessage
+                    {
+                        process = "_supervisor",
+                        processId = 0,
+                        message = $"Starting {serviceName} in '{psi.WorkingDirectory}'"
+                    });
+                    proc.Start();
+                    proc.BeginOutputReadLine();
+                    proc.BeginErrorReadLine();
+                    list.Add(proc);
 
-                };
-
-                proc.OutputDataReceived += (sender, e) => _logStream.Push(serviceName, e.Data);
-                proc.ErrorDataReceived += (sender, e) => _logStream.Push(serviceName, e.Data);
-
-                _logStream.Push("_supervisor", $"Starting Process {serviceName} WorkingDirectory='{proc.StartInfo.WorkingDirectory}'.");
-                proc.Start();
-                _logStream.Push("_supervisor", $"Started Process {serviceName}, {proc.Id}.");
-                proc.BeginOutputReadLine();
-                proc.BeginErrorReadLine();
-
-                list.Add(proc);
+                    _envelopes.Push("_supervisor", new ConsoleLogMessage
+                    {
+                        process = "_supervisor",
+                        processId = proc.Id,
+                        message = $"Started {serviceName} (pid={proc.Id})"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _envelopes.Push("_supervisor", new ConsoleLogMessage
+                    {
+                        process = "_supervisor",
+                        processId = 0,
+                        message = $"Failed to start {serviceName}: {ex.Message}"
+                    });
+                }
             }
 
-            // initial status report
             ReportServiceStatus(serviceName);
             return Task.CompletedTask;
         }
 
-
-
-        /// <inheritdoc />
         public Task StopAsync(string serviceName, int count = 1)
         {
             if (_processes.TryGetValue(serviceName, out var list))
             {
-                var toStop = list.Take(count).ToList();
-                foreach (var p in toStop)
+                foreach (var proc in list.Take(count).ToList())
                 {
-                    try
-                    {
-                        if (!p.HasExited)
-                        {
-                            p.Kill(entireProcessTree: true);
-                        }
-                    }
-                    catch
-                    {
-                        // ignore failures
-                    }
+                    try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); }
+                    catch { /* ignore */ }
                     finally
                     {
-                        p.Dispose();
-                        list.Remove(p);
+                        _envelopes.Push(serviceName, new ConsoleLogMessage
+                        {
+                            process = serviceName,
+                            processId = proc.Id,
+                            message = "Process killed"
+                        });
+                        proc.Dispose();
+                        list.Remove(proc);
                     }
                 }
             }
-
-            // Report updated status after stopping
             ReportServiceStatus(serviceName);
             return Task.CompletedTask;
         }
 
-        /// <inheritdoc />
         public Task<IEnumerable<ServiceStatus>> ListStatusAsync()
         {
             var statuses = OrchestratorConfig.Current.Services.Keys.Select(name =>
             {
                 _processes.TryGetValue(name, out var list);
-                var running = list?.Count ?? 0;
-                var state = running > 0 ? State.Running : State.Stopped;
                 return new ServiceStatus
                 {
                     Name = name,
-                    RunningInstances = running,
-                    State = state,
+                    RunningInstances = list?.Count ?? 0,
+                    State = (list?.Count ?? 0) > 0 ? State.Running : State.Stopped,
                     LastReportAt = DateTime.UtcNow
                 };
             });
             return Task.FromResult(statuses);
         }
-        /// <summary>
-        /// Serializes and pushes the current status of a service to the log stream.
-        /// </summary>
+
         private void ReportServiceStatus(string serviceName)
         {
-            var status = ListStatusAsync().Result.FirstOrDefault(s => s.Name == serviceName);
-            if (status != null)
-            {
-                var json = JsonSerializer.Serialize(status);
-                _logStream.Push("ServiceStatus", json);
-            }
+            var status = ListStatusAsync()
+                         .Result
+                         .FirstOrDefault(s => s.Name == serviceName);
+            if (status == null) return;
+
+            // push a typed ServiceStatus envelope
+            _envelopes.Push("ServiceStatus", status);
         }
     }
 }

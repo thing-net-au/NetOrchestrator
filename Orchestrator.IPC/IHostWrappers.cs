@@ -17,14 +17,14 @@ namespace Orchestrator.IPC
     public class TcpJsonClientHost<T> : IHostedService
     {
         private readonly TcpJsonClient<T> _client;
-        private readonly ILogStreamService _logs;
+        private readonly IEnvelopeStreamService _logs;
         private readonly IpcSettings _opts;
         private readonly string _streamName;
         private readonly int _connectTimeout;
 
         public TcpJsonClientHost(
             TcpJsonClient<T> client,
-            ILogStreamService logs,
+            IEnvelopeStreamService logs,
             IOptions<IpcSettings> optsAccessor)
         {
             _client = client;

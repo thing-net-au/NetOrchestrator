@@ -7,6 +7,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 
 namespace Orchestrator.IPC
@@ -65,8 +66,10 @@ namespace Orchestrator.IPC
         private bool _running;
 
         public event Action<T> MessageReceived;
+        public event Action<string> RawMessageReceived;
 
-        public TcpJsonServer(string ipAddress, int port, int replayCount = 10, int historySize = 100)
+
+        public TcpJsonServer(string ipAddress, int port, int replayCount = 5, int historySize = 5)
         {
             _address = IPAddress.Parse(ipAddress);
             _port = port;
@@ -108,8 +111,10 @@ namespace Orchestrator.IPC
 
                 // Send history
                 foreach (var msg in _history.GetHistory(_replayCount))
-                    await writer.WriteLineAsync(msg.ToJson());
-
+                {
+                    var rawJson = JsonSerializer.Serialize(msg);
+                    await writer.WriteLineAsync(rawJson);
+                }
                 _ = Task.Run(() => HandleClientAsync(id, reader));
             }
         }
@@ -121,6 +126,7 @@ namespace Orchestrator.IPC
                 string line;
                 while ((line = await reader.ReadLineAsync()) != null)
                 {
+                    RawMessageReceived?.Invoke(line);
                     var msg = line.FromJson<T>();
                     _history.Enqueue(msg);
                     MessageReceived?.Invoke(msg);
@@ -182,6 +188,7 @@ namespace Orchestrator.IPC
         private TcpClient _client;
         private StreamReader _reader;
         private StreamWriter _writer;
+        private readonly Channel<T> _outgoing = Channel.CreateUnbounded<T>();
 
         public event Action<T> MessageReceived;
 
@@ -200,7 +207,8 @@ namespace Orchestrator.IPC
             _reader = new StreamReader(stream);
             _writer = new StreamWriter(stream) { AutoFlush = true };
             _ = Task.Run(ReceiveLoopAsync);
-        }
+          _ = Task.Run(SenderLoopAsync);
+       }
 
         private async Task ReceiveLoopAsync()
         {
@@ -219,11 +227,21 @@ namespace Orchestrator.IPC
             }
         }
 
-        public async Task SendAsync(T message)
+        public Task SendAsync(T message)
         {
             if (_writer == null)
                 throw new InvalidOperationException("Not connected");
-            await _writer.WriteLineAsync(message.ToJson());
+//            await _writer.WriteLineAsync(message.ToJson());
+            return _outgoing.Writer.WriteAsync(message).AsTask();
+
+        }
+        private async Task SenderLoopAsync()
+        {
+            await foreach (var msg in _outgoing.Reader.ReadAllAsync())
+            {
+                var json = msg.ToJson();
+                await _writer.WriteLineAsync(json);  // _writer only ever used here
+            }
         }
 
         public void Dispose()

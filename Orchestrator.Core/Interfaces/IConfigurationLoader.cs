@@ -11,5 +11,9 @@ namespace Orchestrator.Core.Interfaces
     public interface IConfigurationLoader
     {
         void Load(IConfiguration configuration);
+  
+            // Add this method to resolve the error.  
+            IEnumerable<string> GetConfiguredServices();
+
     }
 }

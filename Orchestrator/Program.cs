@@ -23,7 +23,7 @@ namespace Orchestrator
             var exeFolder = AppContext.BaseDirectory;
             Directory.SetCurrentDirectory(exeFolder);
 
-            await Host.CreateDefaultBuilder(args)
+            var host = Host.CreateDefaultBuilder(args)
                 // 2) Run as a true service
                 .UseWindowsService()
                 .UseSystemd()
@@ -41,57 +41,44 @@ namespace Orchestrator
                     // in your Program.cs → ConfigureServices(...)
                     services.AddOptions();                                         // 1) make Configure<T> work
                     services.Configure<IpcSettings>(ctx.Configuration.GetSection("Ipc"));
+                    services.AddSingleton<IConfigurationLoader, OrchestratorConfig>(sp =>
+                    {
+                        var loader = new OrchestratorConfig();
+                        loader.Load(sp.GetRequiredService<IConfiguration>());
+                        return loader;
+                    });
 
-                    services.AddSingleton<ILogStreamService, LogStreamService>();
+                    services.AddSingleton<IEnvelopeStreamService, LogStreamService>();
                     services.AddSingleton<IProcessSupervisor, ProcessSupervisor>();
-                    services.AddSingleton<IInternalHealth, PolicyScheduler>();
-                    services.AddHostedService<PolicyScheduler>();
+                    services.AddSingleton<IInternalHealth, ProcessScheduler>();
+                    services.AddHostedService<ProcessScheduler>();
 
                     // 2a) WorkerStatus server registration
                     // inside ConfigureServices(…):
-                    services.AddSingleton<TcpJsonServer<WorkerStatus>>(sp =>
+                    services.AddSingleton<TcpJsonServer<Envelope>>(sp =>
                     {
                         var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
-                        var srv = new TcpJsonServer<WorkerStatus>(
+                        var srv = new TcpJsonServer<Envelope>(
                             opts.Host,
                             opts.LogPort,
                             replayCount: opts.HistorySize,
                             historySize: opts.HistorySize
                         );
                         srv.MessageReceived += ws =>
-                            sp.GetRequiredService<ILogStreamService>()
-                              .Push(ws.ServiceName, JsonSerializer.Serialize(ws));
+                        srv.BroadcastAsync(ws);
+                        //sp.GetRequiredService<ILogStreamService>()
+                        //.Push(ws.ServiceName, JsonSerializer.Serialize(ws));
                         return srv;
                     });
-                    services.AddSingleton<IHostedService, TcpJsonServerHost<WorkerStatus>>();
+                    services.AddSingleton<IHostedService, TcpJsonServerHost<Envelope>>();
 
-                    services.AddSingleton<TcpJsonServer<InternalStatus>>(sp =>
+                            // 2) Register the two TcpJsonClient<T> factories for WorkerStatus & InternalStatus:
+                    services.AddSingleton<TcpJsonClient<Envelope>>(sp =>
                     {
                         var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
-                        var srv = new TcpJsonServer<InternalStatus>(
-                            opts.Host,
-                            opts.StatusPort,
-                            replayCount: opts.HistorySize,
-                            historySize: opts.HistorySize
-                        );
-                        srv.MessageReceived += st =>
-                            sp.GetRequiredService<ILogStreamService>()
-                              .Push("InternalStatus", JsonSerializer.Serialize(st));
-                        return srv;
+                        return new TcpJsonClient<Envelope>(opts.Host, opts.LogPort);
                     });
-                    services.AddSingleton<IHostedService, TcpJsonServerHost<InternalStatus>>();
-
-                    // 2) Register the two TcpJsonClient<T> factories for WorkerStatus & InternalStatus:
-                    services.AddSingleton<TcpJsonClient<WorkerStatus>>(sp =>
-                    {
-                        var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
-                        return new TcpJsonClient<WorkerStatus>(opts.Host, opts.LogPort);
-                    });
-                    services.AddSingleton<TcpJsonClient<InternalStatus>>(sp =>
-                    {
-                        var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
-                        return new TcpJsonClient<InternalStatus>(opts.Host, opts.StatusPort);
-                    });
+  
                     // 3) finally register your Worker which will connect as a client to those two servers
                     services.AddHostedService<Worker>();
 
@@ -104,9 +91,9 @@ namespace Orchestrator
                       .AddEventLog()
                       .SetMinimumLevel(LogLevel.Information);
                 })
-
-                // 6) Run until service stop
-                .RunConsoleAsync();
+                .Build();
+            await host.RunAsync();
         }
+
     }
 }

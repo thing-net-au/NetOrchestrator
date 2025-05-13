@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using Orchestrator.Core;
@@ -14,7 +15,7 @@ namespace Orchestrator.Supervisor
     /// <summary>
     /// Streams log messages from processes to connected clients.
     /// </summary>
-    public class LogStreamService : ILogStreamService, IAsyncDisposable
+    public class LogStreamService : IEnvelopeStreamService, IAsyncDisposable
     {
         private record ChannelInfo(Channel<string> Chan, FixedSizedQueue<string> History);
 
@@ -34,31 +35,48 @@ namespace Orchestrator.Supervisor
                 };
                 return new ChannelInfo(
                     Channel.CreateBounded<string>(options),
-                    new FixedSizedQueue<string>(100)
+                    new FixedSizedQueue<string>(10)
                 );
             });
 
-            // save history
             info.History.Enqueue(message);
-            // push to channel
             info.Chan.Writer.TryWrite(message);
         }
+        // internal push of a raw JSON envelope
+        private void PushRaw(string topic, string envelopeJson)
+        {
+            var info = _channels.GetOrAdd(topic, _ =>
+            {
+                var options = new BoundedChannelOptions(1000)
+                {
+                    SingleReader = false,
+                    SingleWriter = false,
+                    FullMode = BoundedChannelFullMode.Wait
+                };
+                return new ChannelInfo(
+                    Channel.CreateBounded<string>(options),
+                    new FixedSizedQueue<string>(10)
+                );
+            });
 
-        public async IAsyncEnumerable<string> StreamAsync(string serviceName)
+            info.History.Enqueue(envelopeJson);
+            info.Chan.Writer.TryWrite(envelopeJson);
+        }
+
+        // <-- Rename your old StreamAsync(string) to StreamRawAsync(string):
+        public async IAsyncEnumerable<string> StreamRawAsync(string serviceName)
         {
             if (_channels.TryGetValue(serviceName, out var info))
             {
-                // replay
+                // replay history
                 foreach (var msg in info.History.Items)
                     yield return msg;
 
-                // live
+                // live tail
                 var reader = info.Chan.Reader;
                 while (await reader.WaitToReadAsync())
-                {
                     while (reader.TryRead(out var msg))
                         yield return msg;
-                }
             }
         }
 
@@ -67,6 +85,41 @@ namespace Orchestrator.Supervisor
             foreach (var info in _channels.Values)
                 info.Chan.Writer.Complete();
             return ValueTask.CompletedTask;
+        }
+
+        // public API for pushing a strongly-typed payload
+        void IEnvelopeStreamService.Push<T>(string topic, T payload)
+        {
+            JsonElement element = payload switch
+            {
+                JsonElement je => je,
+                _ => JsonSerializer.SerializeToElement(payload)
+            };
+
+            var env = new Envelope
+            {
+                Topic = topic,
+                Type = typeof(T).FullName!,
+                Payload = element
+            };
+
+            // now serialize your envelope (the Payload will be in‐lined as raw JSON)
+            var envJson = JsonSerializer.Serialize(env);
+            // push envJson into your raw‐string channel…
+            PushRaw(topic, envJson);
+        }
+
+        // interface implementation: deserialize each raw JSON into Envelope
+        IAsyncEnumerable<Envelope> IEnvelopeStreamService.StreamAsync(string topic)
+        {
+            return InternalStream();
+            async IAsyncEnumerable<Envelope> InternalStream()
+            {
+                await foreach (var raw in StreamRawAsync(topic))
+                {
+                    yield return JsonSerializer.Deserialize<Envelope>(raw)!;
+                }
+            }
         }
     }
 
