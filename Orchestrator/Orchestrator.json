@@ -53,7 +53,7 @@
     "DemandThreshold": 80
   },
   "Web": {
-    "UiPort": 5000,
+    "UiPort": 5080,
     "ApiPort": 5001,
     "BindIP": "127.0.0.1",
     "StreamBufferSize": 8192

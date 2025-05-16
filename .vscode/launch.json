@@ -1,0 +1,29 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+
+
+        {
+            "name": "C#: Host Orchestrator Debug",
+            "type": "dotnet",
+            "request": "launch",
+            "projectPath": "${workspaceFolder}/Orchestrator/Orchestrator.csproj"
+        },
+        {
+            "name": "C#: WebUI Orchestrator Debug",
+            "type": "dotnet",
+            "request": "launch",
+            "projectPath": "${workspaceFolder}/Orchestrator.WebUI/Orchestrator.WebUI.csproj"
+        },
+       {
+            "name": "C#: WebAPI Orchestrator Debug",
+            "type": "dotnet",
+            "request": "launch",
+            "projectPath": "${workspaceFolder}/Orchestrator.WebAPI/Orchestrator.WebAPI.csproj"
+        }
+
+    ]
+}

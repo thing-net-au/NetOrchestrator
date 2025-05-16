@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Orchestrator.Core;
@@ -36,6 +37,12 @@ namespace Orchestrator.Supervisor
             Details = $"Tracking: {string.Join(", ", _processes.Keys)}"
         };
 
+        private static string Sanitize(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input)) return string.Empty;
+            return input.Replace("\u0000", "").Replace("\r", "\\r").Replace("\n", "\\n").Trim();
+        }
+
         public Task StartAsync(string serviceName, int count = 1)
         {
             if (!OrchestratorConfig.Current.Services.TryGetValue(serviceName, out var cfg))
@@ -53,19 +60,19 @@ namespace Orchestrator.Supervisor
                         Details = $"Executable '{cfg.ExecutablePath}' not found."
                     };
                     _ = _client.SendAsync(new Envelope("ConsoleLogMessage", msg));
-                    continue;
+              //     continue;
                 }
                 if (!string.IsNullOrEmpty(cfg.WorkingDirectory)
                     && !Directory.Exists(cfg.WorkingDirectory))
                 {
-                    var msg = new 
+                    var msg = new ConsoleLogMessage
                     {
                         Name = "_supervisor",
                         PID = 0,
-                        Setails = $"Working dir '{cfg.WorkingDirectory}' not found."
+                        Details = $"Working dir '{cfg.WorkingDirectory}' not found."
                     };
                     _ = _client.SendAsync(new Envelope("ConsoleLogMessage", msg));
-                    continue;
+               //     continue;
                 }
 
                 try
@@ -80,55 +87,74 @@ namespace Orchestrator.Supervisor
                     };
                     var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
 
-                    proc.Exited += (s, e) =>
+                    string capturedServiceName = serviceName;
+
+                    proc.Exited += async (s, e) =>
                     {
+                        await Task.Delay(100); // allow buffer flush
+
                         var exitMsg = new ConsoleLogMessage
                         {
-                            Name  = "_supervisor",
+                            Name = "_supervisor",
                             PID = proc.Id,
                             Details = $"Process exited with code {proc.ExitCode}"
                         };
-                        _ = _client.SendAsync(new Envelope("_supervisor", exitMsg));
-                        ReportServiceStatus(serviceName);
-                        Thread.Sleep(60_000);
+                        _ = _client.SendAsync(new Envelope("ConsoleLogMessage", exitMsg));
+                        ReportServiceStatus(capturedServiceName);
                         list.Remove(proc);
                     };
-                    proc.OutputDataReceived += (s, e) =>
-                        _ = _client.SendAsync(new Envelope(serviceName, new ConsoleLogMessage
-                        {
-                            Name = serviceName,
-                            PID = proc.Id,
-                            Details = e.Data ?? string.Empty
-                        }));
-                    proc.ErrorDataReceived += (s, e) =>
-                        _ = _client.SendAsync(new Envelope(serviceName, new ConsoleLogMessage
-                        {
-                            Name = serviceName,
-                            PID = proc.Id,
-                            Details = e.Data ?? string.Empty
-                        }));
 
-                    _ = _client.SendAsync(new Envelope("_supervisor", new ConsoleLogMessage
+                    proc.OutputDataReceived += async (s, e) =>
+                    {
+                        if (!string.IsNullOrWhiteSpace(e.Data))
+                        {
+                            var msg = new ConsoleLogMessage
+                            {
+                                Name = capturedServiceName,
+                                PID = proc.Id,
+                                Details = Sanitize(e.Data)
+                            };
+                            await _client.SendAsync(new Envelope("ConsoleLogMessage", msg));
+                            await Task.Delay(10); // backoff to avoid congestion
+                        }
+                    };
+
+                    proc.ErrorDataReceived += async (s, e) =>
+                    {
+                        if (!string.IsNullOrWhiteSpace(e.Data))
+                        {
+                            var msg = new ConsoleLogMessage
+                            {
+                                Name = capturedServiceName,
+                                PID = proc.Id,
+                                Details = Sanitize(e.Data)
+                            };
+                            await _client.SendAsync(new Envelope("ConsoleLogMessage", msg));
+                            await Task.Delay(10); // backoff to avoid congestion
+                        }
+                    };
+
+                    _ = _client.SendAsync(new Envelope("ConsoleLogMessage", new ConsoleLogMessage
                     {
                         Name = "_supervisor",
                         PID = 0,
-                        Details = $"Starting {serviceName} in '{psi.WorkingDirectory}'"
+                        Details = $"Starting {capturedServiceName} in '{psi.WorkingDirectory}'"
                     }));
                     proc.Start();
                     proc.BeginOutputReadLine();
                     proc.BeginErrorReadLine();
                     list.Add(proc);
 
-                    _ = _client.SendAsync(new Envelope("_supervisor", new ConsoleLogMessage
+                    _ = _client.SendAsync(new Envelope("ConsoleLogMessage", new ConsoleLogMessage
                     {
                         Name = "_supervisor",
                         PID = proc.Id,
-                        Details = $"Started {serviceName} (pid={proc.Id})"
+                        Details = $"Started {capturedServiceName} (pid={proc.Id})"
                     }));
                 }
                 catch (Exception ex)
                 {
-                    _ = _client.SendAsync(new Envelope("_supervisor", new ConsoleLogMessage
+                    _ = _client.SendAsync(new Envelope("ConsoleLogMessage", new ConsoleLogMessage
                     {
                         Name = "_supervisor",
                         PID = 0,
@@ -151,12 +177,13 @@ namespace Orchestrator.Supervisor
                     catch { /* ignore */ }
                     finally
                     {
-                        _ = _client.SendAsync(new Envelope(serviceName, new ConsoleLogMessage
+                        _ = _client.SendAsync(new Envelope("ConsoleLogMessage", new ConsoleLogMessage
                         {
                             Name = serviceName,
                             PID = proc.Id,
                             Details = "Process killed"
                         }));
+                     Thread.Sleep(250); // delay disposal to ensure stdout delivery
                         proc.Dispose();
                         list.Remove(proc);
                     }

@@ -42,15 +42,19 @@ namespace Orchestrator.WebApi
             _client.MessageReceived += env =>
             {
                 // forward every envelope onto its topic
-                _envelopes.Push(env.Topic, env);
+                //_envelopes.Push(env.Topic, env);
                 switch (env.Topic.ToLowerInvariant())
                 {
                     case "hostheartbeat":
                         //swallow for now
                         break;
+                   case "servicestatus":
+                        //swallow for now
+                        break;
                     case "consolelogmessage":
                         //Convert to ConsoleLogMessage
-                        var msg = env.Payload.Deserialize<ConsoleLogMessage>();
+                   _logger.LogInformation("Received envelope: {Topic} {Payload}", env.Topic, env.Payload);
+                     var msg = env.Payload.Deserialize<ConsoleLogMessage>();
                         if (msg == null)
                         {
                             _logger.LogError($"Failed to deserialize ConsoleLogMessage from {env.Payload}");

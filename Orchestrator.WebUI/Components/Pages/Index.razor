@@ -267,13 +267,27 @@ else
         }
     }
 
-    [JSInvokable]
-    public void ReceiveSupervisorLogChunk(string chunk)
+  [JSInvokable]
+public void ReceiveSupervisorLogChunk(string chunk)
+{
+    try
     {
-        logSupervisor.Add((DateTime.Now, chunk));
-        supervisorLogConnected = true;
-        StateHasChanged();
+        int MaxLogEntries = 1000;
+        var message = JsonSerializer.Deserialize<ConsoleLogMessage>(chunk);
+        if (message is not null)
+        {
+              if (logSupervisor.Count >= MaxLogEntries)
+        logSupervisor.RemoveAt(0);
+         logSupervisor.Add((message.Timestamp, message.Details));
+            supervisorLogConnected = true;
+            StateHasChanged();
+        }
     }
+    catch (JsonException ex)
+    {
+        Console.Error.WriteLine($"Failed to parse supervisor log chunk: {ex.Message}");
+    }
+}
 
     [JSInvokable]
     public void ReceiveLogChunk(string chunk)

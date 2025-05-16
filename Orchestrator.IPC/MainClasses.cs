@@ -165,7 +165,7 @@ namespace Orchestrator.IPC
                         break;    // client has truly disconnected
 
                     // 1) raise the raw‐JSON event
-                    RawMessageReceived?.Invoke(line);
+                   // RawMessageReceived?.Invoke(line);
 
                     // 2) deserialize into your T
                     T msg;
@@ -181,7 +181,7 @@ namespace Orchestrator.IPC
 
                     // 3) enqueue into history & fire typed event
                     _history.Enqueue(msg);
-                    MessageReceived?.Invoke(msg);
+                   // MessageReceived?.Invoke(msg);
 
                     // 4) broadcast to everyone *but* the sender
                     await BroadcastExceptAsync(msg, id);
@@ -213,7 +213,11 @@ namespace Orchestrator.IPC
             {
                 var (client, writer) = kv.Value;
                 if (!client.Connected) continue;
-                try { await writer.WriteLineAsync(json); }
+                try { 
+                    await writer.WriteLineAsync(json); 
+                    await writer.FlushAsync();
+                    await Task.Delay(10); 
+                }
                 catch
                 {
                     writer.Dispose();
@@ -300,22 +304,32 @@ namespace Orchestrator.IPC
             return _outgoing.Writer.WriteAsync(message).AsTask();
 
         }
-        private async Task SenderLoopAsync(CancellationToken ct)
+ private async Task SenderLoopAsync(CancellationToken ct)
+{
+    await foreach (var msg in _outgoing.Reader.ReadAllAsync(ct))
+    {
+        string json;
+        try
         {
-            await foreach (var msg in _outgoing.Reader.ReadAllAsync(ct))
-            {
-                var json = msg.ToJson();
-                try
-                {
-                    await _writer.WriteLineAsync(json);
-                }
-                catch
-                {
-                    // connection broke—stop this loop
-                    break;
-                }
-            }
+            json = msg.ToJson();
         }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[SenderLoop] Serialization failed: {ex.Message}");
+            continue; // skip bad message, keep going
+        }
+
+        try
+        {
+            await _writer.WriteLineAsync(json);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[SenderLoop] Write failed: {ex.Message}");
+            break;
+        }
+    }
+}
 
         public void Dispose()
         {
