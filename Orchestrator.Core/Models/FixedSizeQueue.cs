@@ -2,7 +2,7 @@
 using System.Collections;
 using System.Collections.Generic;
 
-namespace Orchestrator.Supervisor
+namespace Orchestrator.Core
 {
     /// <summary>
     /// A threadsafe, fixed-size FIFO queue. When capacity is exceeded,

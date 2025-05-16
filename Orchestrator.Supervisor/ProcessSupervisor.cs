@@ -4,27 +4,28 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Orchestrator.Core;
 using Orchestrator.Core.Interfaces;
 using Orchestrator.Core.Models;
+using Orchestrator.IPC;
 
 namespace Orchestrator.Supervisor
 {
     /// <summary>
     /// Supervises .NET processes: launch, monitor health, capture logs, and report status.
+    /// Now directly transmits envelopes over the wire using TcpJsonClient<Envelope>.
     /// </summary>
     public class ProcessSupervisor : IProcessSupervisor, IInternalHealth
     {
         private readonly ConcurrentDictionary<string, List<Process>> _processes = new();
-        private readonly IEnvelopeStreamService _envelopes;
+        private readonly TcpJsonClient<Envelope> _client;
         private readonly OrchestratorConfig _config;
 
-        public ProcessSupervisor(IEnvelopeStreamService envelopes)
+        public ProcessSupervisor(TcpJsonClient<Envelope> client)
         {
-            _envelopes = envelopes;
+            _client = client ?? throw new ArgumentNullException(nameof(client));
             _config = new OrchestratorConfig();
         }
 
@@ -43,28 +44,27 @@ namespace Orchestrator.Supervisor
             var list = _processes.GetOrAdd(serviceName, _ => new List<Process>());
             for (int i = 0; i < count; i++)
             {
-                // 1) check paths
                 if (!File.Exists(cfg.ExecutablePath))
                 {
                     var msg = new ConsoleLogMessage
                     {
-                        process = "_supervisor",
-                        processId = 0,
-                        message = $"Executable '{cfg.ExecutablePath}' not found."
+                        Name = "_supervisor",
+                        PID = 0,
+                        Details = $"Executable '{cfg.ExecutablePath}' not found."
                     };
-                    _envelopes.Push("ConsoleLogMessage", msg);
+                    _ = _client.SendAsync(new Envelope("ConsoleLogMessage", msg));
                     continue;
                 }
                 if (!string.IsNullOrEmpty(cfg.WorkingDirectory)
                     && !Directory.Exists(cfg.WorkingDirectory))
                 {
-                    var msg = new ConsoleLogMessage
+                    var msg = new 
                     {
-                        process = "_supervisor",
-                        processId = 0,
-                        message = $"Working dir '{cfg.WorkingDirectory}' not found."
+                        Name = "_supervisor",
+                        PID = 0,
+                        Setails = $"Working dir '{cfg.WorkingDirectory}' not found."
                     };
-                    _envelopes.Push("ConsoleLogMessage", msg);
+                    _ = _client.SendAsync(new Envelope("ConsoleLogMessage", msg));
                     continue;
                 }
 
@@ -82,57 +82,58 @@ namespace Orchestrator.Supervisor
 
                     proc.Exited += (s, e) =>
                     {
-                        _envelopes.Push("_supervisor", new ConsoleLogMessage
+                        var exitMsg = new ConsoleLogMessage
                         {
-                            process = "_supervisor",
-                            processId = proc.Id,
-                            message = $"Process exited with code {proc.ExitCode}"
-                        });
+                            Name  = "_supervisor",
+                            PID = proc.Id,
+                            Details = $"Process exited with code {proc.ExitCode}"
+                        };
+                        _ = _client.SendAsync(new Envelope("_supervisor", exitMsg));
                         ReportServiceStatus(serviceName);
                         Thread.Sleep(60_000);
                         list.Remove(proc);
                     };
                     proc.OutputDataReceived += (s, e) =>
-                        _envelopes.Push(serviceName, new ConsoleLogMessage
+                        _ = _client.SendAsync(new Envelope(serviceName, new ConsoleLogMessage
                         {
-                            process = serviceName,
-                            processId = proc.Id,
-                            message = e.Data ?? string.Empty
-                        });
+                            Name = serviceName,
+                            PID = proc.Id,
+                            Details = e.Data ?? string.Empty
+                        }));
                     proc.ErrorDataReceived += (s, e) =>
-                        _envelopes.Push(serviceName, new ConsoleLogMessage
+                        _ = _client.SendAsync(new Envelope(serviceName, new ConsoleLogMessage
                         {
-                            process = serviceName,
-                            processId = proc.Id,
-                            message = e.Data ?? string.Empty
-                        });
+                            Name = serviceName,
+                            PID = proc.Id,
+                            Details = e.Data ?? string.Empty
+                        }));
 
-                    _envelopes.Push("_supervisor", new ConsoleLogMessage
+                    _ = _client.SendAsync(new Envelope("_supervisor", new ConsoleLogMessage
                     {
-                        process = "_supervisor",
-                        processId = 0,
-                        message = $"Starting {serviceName} in '{psi.WorkingDirectory}'"
-                    });
+                        Name = "_supervisor",
+                        PID = 0,
+                        Details = $"Starting {serviceName} in '{psi.WorkingDirectory}'"
+                    }));
                     proc.Start();
                     proc.BeginOutputReadLine();
                     proc.BeginErrorReadLine();
                     list.Add(proc);
 
-                    _envelopes.Push("_supervisor", new ConsoleLogMessage
+                    _ = _client.SendAsync(new Envelope("_supervisor", new ConsoleLogMessage
                     {
-                        process = "_supervisor",
-                        processId = proc.Id,
-                        message = $"Started {serviceName} (pid={proc.Id})"
-                    });
+                        Name = "_supervisor",
+                        PID = proc.Id,
+                        Details = $"Started {serviceName} (pid={proc.Id})"
+                    }));
                 }
                 catch (Exception ex)
                 {
-                    _envelopes.Push("_supervisor", new ConsoleLogMessage
+                    _ = _client.SendAsync(new Envelope("_supervisor", new ConsoleLogMessage
                     {
-                        process = "_supervisor",
-                        processId = 0,
-                        message = $"Failed to start {serviceName}: {ex.Message}"
-                    });
+                        Name = "_supervisor",
+                        PID = 0,
+                        Details = $"Failed to start {serviceName}: {ex.Message}"
+                    }));
                 }
             }
 
@@ -150,12 +151,12 @@ namespace Orchestrator.Supervisor
                     catch { /* ignore */ }
                     finally
                     {
-                        _envelopes.Push(serviceName, new ConsoleLogMessage
+                        _ = _client.SendAsync(new Envelope(serviceName, new ConsoleLogMessage
                         {
-                            process = serviceName,
-                            processId = proc.Id,
-                            message = "Process killed"
-                        });
+                            Name = serviceName,
+                            PID = proc.Id,
+                            Details = "Process killed"
+                        }));
                         proc.Dispose();
                         list.Remove(proc);
                     }
@@ -188,8 +189,7 @@ namespace Orchestrator.Supervisor
                          .FirstOrDefault(s => s.Name == serviceName);
             if (status == null) return;
 
-            // push a typed ServiceStatus envelope
-            _envelopes.Push("ServiceStatus", status);
+            _ = _client.SendAsync(new Envelope("ServiceStatus", status));
         }
     }
 }

@@ -48,13 +48,6 @@ namespace Orchestrator
                         return loader;
                     });
 
-                    services.AddSingleton<IEnvelopeStreamService, LogStreamService>();
-                    services.AddSingleton<IProcessSupervisor, ProcessSupervisor>();
-                    services.AddSingleton<IInternalHealth, ProcessScheduler>();
-                    services.AddHostedService<ProcessScheduler>();
-
-                    // 2a) WorkerStatus server registration
-                    // inside ConfigureServices(…):
                     services.AddSingleton<TcpJsonServer<Envelope>>(sp =>
                     {
                         var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
@@ -70,15 +63,35 @@ namespace Orchestrator
                         //.Push(ws.ServiceName, JsonSerializer.Serialize(ws));
                         return srv;
                     });
-                    services.AddSingleton<IHostedService, TcpJsonServerHost<Envelope>>();
+                    //      services.AddSingleton<IHostedService, TcpJsonServerHost<Envelope>>();
 
-                            // 2) Register the two TcpJsonClient<T> factories for WorkerStatus & InternalStatus:
+                    // after
+                    services.AddHostedService<TcpJsonServerHost<Envelope>>();
+
+                    services.AddSingleton<IEnvelopeStreamService, LogStreamService>();
+                    services.AddSingleton<IProcessSupervisor, ProcessSupervisor>();
+                    services.AddSingleton<IInternalHealth, ProcessScheduler>();
+                    services.AddHostedService<EnvelopeForwarder>();
+                    services.AddHostedService<ProcessScheduler>();
+
+
                     services.AddSingleton<TcpJsonClient<Envelope>>(sp =>
                     {
                         var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
-                        return new TcpJsonClient<Envelope>(opts.Host, opts.LogPort);
+                        var logger = sp.GetRequiredService<ILoggerFactory>()
+                                       .CreateLogger("OrchestratorClient");
+                        var client = new TcpJsonClient<Envelope>(opts.Host, opts.LogPort);
+
+                        // fire-and-forget the retry loop
+                        _ = IpcHelpers.ConnectWithRetry(
+                                client,
+                                "OrchestratorClient",
+                                logger,
+                                CancellationToken.None
+                            );
+
+                        return client;
                     });
-  
                     // 3) finally register your Worker which will connect as a client to those two servers
                     services.AddHostedService<Worker>();
 

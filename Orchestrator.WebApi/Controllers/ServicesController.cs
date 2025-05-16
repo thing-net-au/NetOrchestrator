@@ -2,6 +2,8 @@
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
+using Orchestrator.Core;
 using Orchestrator.Core.Interfaces;
 using Orchestrator.Core.Models;
 
@@ -13,13 +15,18 @@ namespace Orchestrator.WebApi.Controllers
     {
         private readonly IProcessSupervisor _supervisor;
         private readonly IEnumerable<IInternalHealth> _healthProviders;
+        private readonly IConfiguration _configuration;
+        private readonly OrchestratorConfig _orchestratorConfig;
 
         public ServicesController(
+            IConfiguration configuration,
             IProcessSupervisor supervisor,
             IEnumerable<IInternalHealth> healthProviders)
         {
             _supervisor = supervisor;
             _healthProviders = healthProviders;
+            _configuration = configuration;
+            _orchestratorConfig = OrchestratorConfig.Current!;
         }
 
         /// <summary>
@@ -28,7 +35,9 @@ namespace Orchestrator.WebApi.Controllers
         /// </summary>
         [HttpGet]
         public Task<IEnumerable<ServiceStatus>> GetAll()
-            => _supervisor.ListStatusAsync();
+        {
+                  return _supervisor.ListStatusAsync();
+        }   
 
         /// <summary>
         /// POST /api/services/{name}/start

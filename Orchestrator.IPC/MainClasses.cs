@@ -118,27 +118,84 @@ namespace Orchestrator.IPC
                 _ = Task.Run(() => HandleClientAsync(id, reader));
             }
         }
+        /// <summary>
+        /// Broadcast to *all* connected clients except the one with this ID.
+        /// </summary>
+        private async Task BroadcastExceptAsync(T message, int excludeClientId)
+        {
+            var json = message.ToJson();
+            foreach (var kv in _clients.ToArray())
+            {
+                var clientId = kv.Key;
+                var (client, writer) = kv.Value;
+                if (clientId == excludeClientId || !client.Connected)
+                    continue;
+
+                try
+                {
+                    await writer.WriteLineAsync(json);
+                }
+                catch
+                {
+                    writer.Dispose();
+                    client.Close();
+                    _clients.TryRemove(clientId, out _);
+                }
+            }
+        }
 
         private async Task HandleClientAsync(int id, StreamReader reader)
         {
             try
             {
-                string line;
-                while ((line = await reader.ReadLineAsync()) != null)
+                while (_running)
                 {
+                    var readTask = reader.ReadLineAsync();
+                    var timeout = Task.Delay(TimeSpan.FromMinutes(5));
+                    var completed = await Task.WhenAny(readTask, timeout);
+
+                    if (completed == timeout)
+                    {
+                        // idle period; keep the connection open
+                        continue;
+                    }
+
+                    var line = await readTask;
+                    if (line == null)
+                        break;    // client has truly disconnected
+
+                    // 1) raise the raw‐JSON event
                     RawMessageReceived?.Invoke(line);
-                    var msg = line.FromJson<T>();
+
+                    // 2) deserialize into your T
+                    T msg;
+                    try
+                    {
+                        msg = line.FromJson<T>();
+                    }
+                    catch (JsonException)
+                    {
+                        // invalid JSON—skip and continue listening
+                        continue;
+                    }
+
+                    // 3) enqueue into history & fire typed event
                     _history.Enqueue(msg);
                     MessageReceived?.Invoke(msg);
-                    await BroadcastAsync(msg);
+
+                    // 4) broadcast to everyone *but* the sender
+                    await BroadcastExceptAsync(msg, id);
                 }
             }
-            catch
+            catch( Exception e)
             {
-                // swallow
+                var i = e;
+
+                // swallow any unexpected IO errors
             }
             finally
             {
+                // clean up on true disconnect
                 if (_clients.TryRemove(id, out var kv))
                 {
                     kv.Writer.Dispose();
@@ -146,6 +203,8 @@ namespace Orchestrator.IPC
                 }
             }
         }
+
+
 
         public async Task BroadcastAsync(T message)
         {
@@ -189,6 +248,8 @@ namespace Orchestrator.IPC
         private StreamReader _reader;
         private StreamWriter _writer;
         private readonly Channel<T> _outgoing = Channel.CreateUnbounded<T>();
+        private Task? _senderTask;
+        private CancellationTokenSource? _senderCts;
 
         public event Action<T> MessageReceived;
 
@@ -206,9 +267,11 @@ namespace Orchestrator.IPC
             var stream = _client.GetStream();
             _reader = new StreamReader(stream);
             _writer = new StreamWriter(stream) { AutoFlush = true };
+            _senderCts?.Cancel();
+            _senderCts = new CancellationTokenSource();
+            _senderTask = Task.Run(() => SenderLoopAsync(_senderCts.Token));
             _ = Task.Run(ReceiveLoopAsync);
-          _ = Task.Run(SenderLoopAsync);
-       }
+      }
 
         private async Task ReceiveLoopAsync()
         {
@@ -229,23 +292,34 @@ namespace Orchestrator.IPC
 
         public Task SendAsync(T message)
         {
+            return _outgoing.Writer.WriteAsync(message).AsTask();
+
             if (_writer == null)
                 throw new InvalidOperationException("Not connected");
 //            await _writer.WriteLineAsync(message.ToJson());
             return _outgoing.Writer.WriteAsync(message).AsTask();
 
         }
-        private async Task SenderLoopAsync()
+        private async Task SenderLoopAsync(CancellationToken ct)
         {
-            await foreach (var msg in _outgoing.Reader.ReadAllAsync())
+            await foreach (var msg in _outgoing.Reader.ReadAllAsync(ct))
             {
                 var json = msg.ToJson();
-                await _writer.WriteLineAsync(json);  // _writer only ever used here
+                try
+                {
+                    await _writer.WriteLineAsync(json);
+                }
+                catch
+                {
+                    // connection broke—stop this loop
+                    break;
+                }
             }
         }
 
         public void Dispose()
         {
+            _senderCts?.Cancel();
             _writer?.Dispose();
             _reader?.Dispose();
             _client?.Close();
@@ -276,5 +350,32 @@ namespace Orchestrator.IPC
             _server.Stop();
             return Task.CompletedTask;
         }
+
     }
+ 
+public static class TcpJsonClientExtensions
+    {
+        public static IAsyncEnumerable<T> StreamAsync<T>(this TcpJsonClient<T> client, CancellationToken ct = default)
+        {
+            var chan = Channel.CreateUnbounded<T>();
+            void OnMsg(T msg) => _ = chan.Writer.WriteAsync(msg, ct);
+            client.MessageReceived += OnMsg;
+
+            return ReadAllAsync();
+
+            async IAsyncEnumerable<T> ReadAllAsync()
+            {
+                try
+                {
+                    await foreach (var msg in chan.Reader.ReadAllAsync(ct))
+                        yield return msg;
+                }
+                finally
+                {
+                    client.MessageReceived -= OnMsg;
+                }
+            }
+        }
+    }
+
 }

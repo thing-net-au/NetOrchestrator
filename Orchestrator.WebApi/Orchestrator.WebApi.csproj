@@ -27,6 +27,7 @@
 	<ItemGroup>
     <ProjectReference Include="..\Orchestrator.Core\Orchestrator.Core.csproj" />
     <ProjectReference Include="..\Orchestrator.IPC\Orchestrator.IPC.csproj" />
+    <ProjectReference Include="..\Orchestrator.Supervisor\Orchestrator.Supervisor.csproj" />
   </ItemGroup>
 
 </Project>

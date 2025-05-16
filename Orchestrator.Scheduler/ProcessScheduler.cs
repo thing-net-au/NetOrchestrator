@@ -52,12 +52,8 @@ namespace Orchestrator.Scheduler
                 foreach (var status in statuses)
                 {
                     // wrap each ServiceStatus in an Envelope:
-                    var env = new Envelope
-                    {
-                        Topic = "ServiceStatus",
-                        Payload = JsonSerializer.SerializeToElement(status)
-                    };
-                    _envelopes.Push("ServiceStatus", env);
+                    var env = new Envelope("ServiceStatus", status);
+                                        _envelopes.Push("ServiceStatus", env);
                 }
 
                 foreach (var svcConfig in OrchestratorConfig.Current.Services.Values)

@@ -1,7 +1,7 @@
-﻿using System.Text.Json;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
+﻿using System;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -11,67 +11,88 @@ using Orchestrator.IPC;
 
 namespace Orchestrator.WebApi
 {
-
-    /// <summary>
-    /// On startup, connect two TcpJsonClient<T> and hook their MessageReceived
-    /// into the ILogStreamService so your SSE endpoints pick them up.
-    /// </summary>
     public class StartupJsonClients : IHostedService, IDisposable
     {
-        private readonly IEnvelopeStreamService _logs;
+        private readonly IEnvelopeStreamService _envelopes;
+        private readonly IConsoleLogStreamService _consoleMessages;
         private readonly ILogger<StartupJsonClients> _logger;
         private readonly IOptions<IpcSettings> _opts;
-        private TcpJsonClient<WorkerStatus> _logClient;
-        private TcpJsonClient<InternalStatus> _statusClient;
-        private const int _connectRetryMs = 10000;
+
+        private TcpJsonClient<Envelope> _client;
         private CancellationTokenSource _cts;
 
         public StartupJsonClients(
-            IEnvelopeStreamService logs,
+            IEnvelopeStreamService envelopes,
+            IConsoleLogStreamService consoleMessages,
             ILogger<StartupJsonClients> logger,
             IOptions<IpcSettings> opts)
         {
-            _logs = logs;
+            _envelopes = envelopes;
+            _consoleMessages = consoleMessages;
             _logger = logger;
             _opts = opts;
         }
 
-        public async Task StartAsync(CancellationToken cancellationToken)
+        public Task StartAsync(CancellationToken cancellationToken)
         {
             _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-
             var cfg = _opts.Value;
 
-            // log client
-            _logClient = new TcpJsonClient<WorkerStatus>(cfg.Host, cfg.LogPort);
-            _logClient.MessageReceived += ws =>
-                _logs.Push(ws.ServiceName, JsonSerializer.Serialize(ws));
+            _client = new TcpJsonClient<Envelope>(cfg.Host, cfg.LogPort);
+            _client.MessageReceived += env =>
+            {
+                // forward every envelope onto its topic
+                _envelopes.Push(env.Topic, env);
+                switch (env.Topic.ToLowerInvariant())
+                {
+                    case "hostheartbeat":
+                        //swallow for now
+                        break;
+                    case "consolelogmessage":
+                        //Convert to ConsoleLogMessage
+                        var msg = env.Payload.Deserialize<ConsoleLogMessage>();
+                        if (msg == null)
+                        {
+                            _logger.LogError($"Failed to deserialize ConsoleLogMessage from {env.Payload}");
+                            break;
+                        }
+                        // forward to the console message stream
+                        _consoleMessages.Push(msg.Name, msg);
+                        break;
+                    default:
+                        _logger.LogError($"topic: {env.Topic} not found. message {env.Payload}");
+                        break;
 
-            // status client
-            _statusClient = new TcpJsonClient<InternalStatus>(cfg.Host, cfg.StatusPort);
-            _statusClient.MessageReceived += st =>
-                _logs.Push("InternalStatus", JsonSerializer.Serialize(st));
+                }
+            };
 
-            // fire & forget connect loops
-            _ = ConnectWithRetry(_logClient, "WorkerStatus", _cts.Token);
-            _ = ConnectWithRetry(_statusClient, "InternalStatus", _cts.Token);
+            // Only one TCP client now
+            _ = ConnectWithRetry(_client, "EnvelopeStream", _cts.Token);
+
+            return Task.CompletedTask;
         }
 
-        private async Task ConnectWithRetry<T>(TcpJsonClient<T> client, string name, CancellationToken token)
+        private async Task ConnectWithRetry(
+            TcpJsonClient<Envelope> client,
+            string name,
+            CancellationToken token)
         {
+            const int retryMs = 10_000;
             while (!token.IsCancellationRequested)
             {
                 try
                 {
                     _logger.LogInformation("Connecting to {Name} server...", name);
-                    await client.ConnectAsync(timeoutMs: _connectRetryMs);
+                    await client.ConnectAsync(timeoutMs: retryMs);
                     _logger.LogInformation("Connected to {Name} server", name);
                     return;
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to connect to {Name} server; retrying in {Delay}ms", name, _connectRetryMs);
-                    try { await Task.Delay(_connectRetryMs, token); }
+                    _logger.LogWarning(ex,
+                        "Failed to connect to {Name} server; retrying in {Delay}ms",
+                        name, retryMs);
+                    try { await Task.Delay(retryMs, token); }
                     catch (OperationCanceledException) { break; }
                 }
             }
@@ -79,9 +100,8 @@ namespace Orchestrator.WebApi
 
         public Task StopAsync(CancellationToken cancellationToken)
         {
-            _cts?.Cancel();
-            _logClient?.Dispose();
-            _statusClient?.Dispose();
+            _cts.Cancel();
+            _client?.Dispose();
             return Task.CompletedTask;
         }
 

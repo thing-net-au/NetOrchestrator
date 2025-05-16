@@ -38,12 +38,15 @@ namespace Orchestrator.WebApi
             // 1) bind IpcSettings
             builder.Services.AddOptions();
             builder.Services.Configure<IpcSettings>(builder.Configuration.GetSection("Ipc"));
-
-            // 2) in‐memory broker for SSE
-            builder.Services.AddSingleton<IEnvelopeStreamService, LogStreamService>();
-
-            // 3) supervisor (for your /api/services controller)
+            builder.Services.AddSingleton<TcpJsonClient<Envelope>>(sp => {
+                var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
+                return new TcpJsonClient<Envelope>(opts.Host, opts.LogPort);
+            });
+            builder.Services.AddSingleton<LogStreamService>();
+            builder.Services.AddSingleton<IEnvelopeStreamService, EnvelopeStreamService>();
+            builder.Services.AddSingleton<IConsoleLogStreamService, ConsoleLogStreamService>();
             builder.Services.AddSingleton<IProcessSupervisor, ProcessSupervisor>();
+
             builder.Services.AddControllers();
 
             // 4) our “startup” hosted service that spins up two TcpJsonClient<T>
@@ -70,27 +73,35 @@ namespace Orchestrator.WebApi
 
             app.MapControllers();
 
-            // SSE for WorkerStatus
+            // SSE for WorkerStatus (deserialized payload)
+            // SSE for ConsoleLogMessage (or WorkerStatus, etc)
             app.MapGet("/api/services/{name}/logs/stream", async ctx =>
             {
                 var name = (string)ctx.Request.RouteValues["name"]!;
-                var logs = ctx.RequestServices.GetRequiredService<IEnvelopeStreamService>();
+                var logs = ctx.RequestServices.GetRequiredService<IConsoleLogStreamService>();
                 ctx.Response.Headers.Add("Content-Type", "text/event-stream");
 
-                await foreach (var ws in logs.StreamAsync<WorkerStatus>(name))
+                await foreach (var env in logs.StreamAsync(name))
                 {
-                    var json = JsonSerializer.Serialize(ws);
+                    // Deserialize the payload to your expected type:
+                    //var msg = JsonSerializer.Deserialize<ConsoleLogMessage>(env.Details)!;
+                    var json = JsonSerializer.Serialize(env);
                     await ctx.Response.WriteAsync($"data: {json}\n\n");
+                    await ctx.Response.Body.FlushAsync();
                 }
             });
 
-            // SSE for InternalStatus
+            // SSE for InternalStatus (still envelope-based)
             app.MapGet("/api/status/stream", async ctx =>
             {
                 var logs = ctx.RequestServices.GetRequiredService<IEnvelopeStreamService>();
                 ctx.Response.Headers.Add("Content-Type", "text/event-stream");
-                await foreach (var json in logs.StreamAsync("InternalStatus"))
+
+                await foreach (var env in logs.StreamAsync("HostHeartBeat"))
                 {
+                    // You can emit the full envelope, or just the payload:
+                    var status = JsonSerializer.Deserialize<InternalStatus>(env.Payload.GetRawText())!;
+                    var json = JsonSerializer.Serialize(status);
                     await ctx.Response.WriteAsync($"data: {json}\n\n");
                     await ctx.Response.Body.FlushAsync();
                 }
