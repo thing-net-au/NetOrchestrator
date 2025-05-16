@@ -25,9 +25,12 @@ namespace Orchestrator
 
             var host = Host.CreateDefaultBuilder(args)
                 // 2) Run as a true service
+//#if WINDOWS
                 .UseWindowsService()
+//#endif
+//#if LINUX
                 .UseSystemd()
-
+//#endif
                 // 3) Load orchestrator.json
                 .ConfigureAppConfiguration((ctx, cfg) =>
                 {
@@ -101,8 +104,10 @@ namespace Orchestrator
                 .ConfigureLogging((ctx, lb) =>
                 {
                     lb.AddSimpleConsole(o => o.SingleLine = true)
+#if WINDOWS
                       .AddEventLog()
-                      .SetMinimumLevel(LogLevel.Information);
+#endif
+                      .SetMinimumLevel(LogLevel.Debug);
                 })
                 .Build();
             await host.RunAsync();
