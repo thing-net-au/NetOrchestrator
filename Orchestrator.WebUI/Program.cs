@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Net.Http.Headers;
 using Orchestrator.Core;
 using Orchestrator.WebUI.Components;
 
@@ -56,7 +57,11 @@ namespace Orchestrator.WebUI
                 //opts.ListenAnyIP(OrchestratorConfig.Current.Web.UiPort, listen => listen.UseHttps()));
 
             var app = builder.Build();
-
+            app.Use(async (httpContext, next) =>
+            {
+                httpContext.Response.Headers[HeaderNames.CacheControl] = "no-cache";
+                await next();
+            });
             // 4) Static files & routing
             if (!app.Environment.IsDevelopment())
             {
@@ -64,7 +69,20 @@ namespace Orchestrator.WebUI
                 app.UseHsts();
             }
             app.UseHttpsRedirection();
-            app.UseStaticFiles();   // serve wwwroot/* :contentReference[oaicite:1]{index=1}
+            app.UseStaticFiles(new StaticFileOptions
+            {
+                OnPrepareResponse = ctx =>
+                {
+                    var path = ctx.File.PhysicalPath;
+                    if (path.Contains(Path.Combine("_framework", "")))
+                    {
+                        ctx.Context.Response.Headers["Cache-Control"] =
+                            "no-cache, no-store, must-revalidate";
+                        ctx.Context.Response.Headers["Pragma"] = "no-cache";
+                        ctx.Context.Response.Headers["Expires"] = "0";
+                    }
+                }
+            }); 
             app.UseRouting();
             app.UseAntiforgery();
             // 5) Wire up your App component as the only endpoint

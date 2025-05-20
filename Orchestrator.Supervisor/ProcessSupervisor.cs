@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,6 +24,25 @@ namespace Orchestrator.Supervisor
         private readonly ConcurrentDictionary<string, List<Process>> _processes = new();
         private readonly TcpJsonClient<Envelope> _client;
         private readonly OrchestratorConfig _config;
+
+
+        private const int CTRL_C_EVENT = 0;
+        private const uint ATTACH_PARENT_PROCESS = 0xFFFFFFFF;
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GenerateConsoleCtrlEvent(uint dwCtrlEvent, uint dwProcessGroupId);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool AttachConsole(uint dwProcessId);
+
+        [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
+        private static extern bool FreeConsole();
+
+        [DllImport("kernel32.dll")]
+        private static extern bool SetConsoleCtrlHandler(ConsoleCtrlDelegate? handlerRoutine, bool add);
+
+        private delegate bool ConsoleCtrlDelegate(uint ctrlType);
+
 
         public ProcessSupervisor(TcpJsonClient<Envelope> client)
         {
@@ -217,6 +237,74 @@ namespace Orchestrator.Supervisor
             if (status == null) return;
 
             _ = _client.SendAsync(new Envelope("ServiceStatus", status));
+        }
+        /// <summary>
+        /// Send Ctrl+C to each tracked process, wait up to 30s for it to exit, then kill any survivors.
+        /// </summary>
+        public async Task ShutdownAllAsync()
+        {
+            var all = _processes
+                .SelectMany(kvp => kvp.Value)
+                .Where(p => !p.HasExited)
+                .ToList();
+
+            foreach (var proc in all)
+            {
+                try
+                {
+                    // 1) Attach to the child’s console (or the parent if it has none)
+                    if (!AttachConsole((uint)proc.Id))
+                    {
+                        // Fallback: attach to our own parent console
+                        AttachConsole(ATTACH_PARENT_PROCESS);
+                    }
+
+                    // 2) Suppress our own handler so we don’t kill ourselves
+                    SetConsoleCtrlHandler(null, true);
+
+                    // 3) Send Ctrl+C to the group
+                    GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0);
+
+                    // 4) Detach and restore
+                    FreeConsole();
+                    SetConsoleCtrlHandler(null, false);
+                }
+                catch
+                {
+                    // ignore any P/Invoke failures
+                }
+            }
+
+            // 5) Wait for up to 30s for all to exit
+            var tasks = all.Select(p => WaitForExitAsync(p, TimeSpan.FromSeconds(30))).ToArray();
+            await Task.WhenAll(tasks);
+
+            // 6) Kill any still-running processes
+            foreach (var proc in all.Where(p => !p.HasExited))
+            {
+                try
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+                catch { /* ignore */ }
+            }
+        }
+
+        /// <summary>
+        /// Wrap Process.WaitForExitAsync with timeout.
+        /// </summary>
+        private static async Task WaitForExitAsync(Process proc, TimeSpan timeout)
+        {
+            var tcs = new TaskCompletionSource<object?>();
+            proc.EnableRaisingEvents = true;
+            proc.Exited += (s, e) => tcs.TrySetResult(null);
+
+            if (proc.HasExited)
+                return;
+
+            var delay = Task.Delay(timeout);
+            var winner = await Task.WhenAny(tcs.Task, delay);
+            // if delay won, we just return and caller will kill
         }
     }
 }

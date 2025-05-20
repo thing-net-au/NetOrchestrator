@@ -35,7 +35,7 @@ namespace Orchestrator.IPC
                 };
                 return new ChannelInfo(
                     Channel.CreateBounded<string>(options),
-                    new FixedSizedQueue<string>(10)
+                    new FixedSizedQueue<string>(50)
                 );
             });
 
@@ -55,7 +55,7 @@ namespace Orchestrator.IPC
                 };
                 return new ChannelInfo(
                     Channel.CreateBounded<string>(options),
-                    new FixedSizedQueue<string>(10)
+                    new FixedSizedQueue<string>(50)
                 );
             });
 
@@ -76,7 +76,7 @@ namespace Orchestrator.IPC
                 };
                 return new ChannelInfo(
                     Channel.CreateBounded<string>(options),
-                    new FixedSizedQueue<string>(10)
+                    new FixedSizedQueue<string>(50)
                 );
             });
 

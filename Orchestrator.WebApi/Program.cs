@@ -11,6 +11,7 @@ using Orchestrator.Supervisor;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 using Orchestrator.Core;
+using Microsoft.Net.Http.Headers;
 
 namespace Orchestrator.WebApi
 {
@@ -62,7 +63,14 @@ namespace Orchestrator.WebApi
             //opts.ListenAnyIP(OrchestratorConfig.Current.Web.UiPort, listen => listen.UseHttps()));
 
             var app = builder.Build();
+            app.Use(async (httpContext, next) =>
+            {
+                httpContext.Response.Headers[HeaderNames.CacheControl] = "no-cache, no-store, must-revalidate";
+                httpContext.Response.Headers[HeaderNames.Pragma] = "no-cache";
+                httpContext.Response.Headers[HeaderNames.Expires] = "0";
 
+                await next();
+            });
             app.UseCors("AllowAll");
             if (app.Environment.IsDevelopment())
             {

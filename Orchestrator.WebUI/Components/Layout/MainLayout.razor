@@ -23,3 +23,11 @@
     <a href="" class="reload">Reload</a>
     <a class="dismiss">🗙</a>
 </div>
+<script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker
+        .getRegistrations()
+        .then(regs => regs.forEach(r => r.unregister()));
+    }
+</script>
+

@@ -25,12 +25,12 @@ namespace Orchestrator
 
             var host = Host.CreateDefaultBuilder(args)
                 // 2) Run as a true service
-//#if WINDOWS
+                //#if WINDOWS
                 .UseWindowsService()
-//#endif
-//#if LINUX
+                //#endif
+                //#if LINUX
                 .UseSystemd()
-//#endif
+                //#endif
                 // 3) Load orchestrator.json
                 .ConfigureAppConfiguration((ctx, cfg) =>
                 {
@@ -72,7 +72,8 @@ namespace Orchestrator
                     services.AddHostedService<TcpJsonServerHost<Envelope>>();
 
                     services.AddSingleton<IEnvelopeStreamService, LogStreamService>();
-                    services.AddSingleton<IProcessSupervisor, ProcessSupervisor>();
+                    services.AddSingleton<ProcessSupervisor>();          
+                    services.AddSingleton<IProcessSupervisor>(sp => sp.GetRequiredService<ProcessSupervisor>());
                     services.AddSingleton<IInternalHealth, ProcessScheduler>();
                     services.AddHostedService<EnvelopeForwarder>();
                     services.AddHostedService<ProcessScheduler>();
@@ -110,6 +111,14 @@ namespace Orchestrator
                       .SetMinimumLevel(LogLevel.Debug);
                 })
                 .Build();
+            var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+            var supervisor = host.Services.GetRequiredService<ProcessSupervisor>();
+            lifetime.ApplicationStopping.Register(async () =>
+            {
+                // this will fire when the host is shutting down (SIGTERM, Ctrl+C, etc.)
+                await supervisor.ShutdownAllAsync();
+            });
+
             await host.RunAsync();
         }
 

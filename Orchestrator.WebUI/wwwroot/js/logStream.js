@@ -87,8 +87,20 @@
             setTimeout(() => this.open(dotnetObj, url), delayMs);
         }
     };
+    // --- POPUP Windows ---
+    function popup(url, opts = {}) {
+        // open a window, default 800×600
+        const spec = [
+            `width=${opts.width || 800}`,
+            `height=${opts.height || 600}`,
+            `scrollbars=${opts.scrollbars != null ? opts.scrollbars : "yes"}`,
+            `resizable=${opts.resizable != null ? opts.resizable : "yes"}`
+        ].join();
+        const w = window.open(url, "_blank", spec);
+        if (!w) console.error("Popup blocked:", url);
+    }
 
-    // --- Status Stream ---
+     // --- Status Stream ---
     const statusStream = {
         _source: null,
 
@@ -120,6 +132,7 @@
     return {
         serviceLog: serviceLogStream,
         supervisorLog: supervisorLogStream,
-        status: statusStream
+        status: statusStream,
+        popup
     };
 })();

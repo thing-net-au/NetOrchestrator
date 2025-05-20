@@ -1,36 +1,9 @@
 {
   "Services": {
-    "BKGService": {
-      "Name": "BKGService",
-      "ExecutablePath": "C:/IMS/IMPService/IMS-Next.Import.dll",
-      "WorkingDirectory": "C:/IMS/IMPService/",
-      "Arguments": "--env=prod --queue=tasks",
-      "MinInstances": 1,
-      "MaxInstances": 1,
-      "SchedulePolicy": {
-        "Type": "demand",
-        "Threshold": 75,
-        "Cron": null
-      },
-      "Dependencies": [ "QueueListener" ]
-    },
-    "WorkerApp": {
-      "Name": "WorkerApp",
-      "ExecutablePath": "apps/WorkerApp.dll",
-      "WorkingDirectory": "",
-      "Arguments": "--env=prod --queue=tasks",
-      "MinInstances": 1,
-      "MaxInstances": 1,
-      "SchedulePolicy": {
-        "Type": "demand",
-        "Threshold": 75,
-        "Cron": null
-      },
-      "Dependencies": [ "QueueListener" ]
-    },
-    "QueueListener": {
-      "Name": "QueueListener",
-      "ExecutablePath": "apps/QueueListener.dll",
+
+    "Test1": {
+      "Name": "Test1",
+      "ExecutablePath": "TestService1Console.dll",
       "WorkingDirectory": "",
       "Arguments": "--env=prod",
       "MinInstances": 1,
@@ -53,7 +26,7 @@
     "DemandThreshold": 80
   },
   "Web": {
-    "UiPort": 5000,
+    "UiPort": 5080,
     "ApiPort": 5001,
     "BindIP": "127.0.0.1",
     "StreamBufferSize": 8192
