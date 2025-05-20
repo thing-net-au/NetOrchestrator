@@ -11,13 +11,15 @@ namespace TestService1Console
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            int Repeat = 0;
             while (!stoppingToken.IsCancellationRequested)
             {
                 if (_logger.IsEnabled(LogLevel.Information))
                 {
-                    _logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
+                    Repeat++;
+                    _logger.LogInformation("Worker Iteration {Repeat} running at: {time}",Repeat, DateTimeOffset.Now);
                 }
-                await Task.Delay(1000, stoppingToken);
+                await Task.Delay(500, stoppingToken);
             }
         }
     }

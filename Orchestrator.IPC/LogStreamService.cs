@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -12,94 +11,78 @@ using Orchestrator.Core.Models;
 
 namespace Orchestrator.IPC
 {
-    /// <summary>
-    /// Streams log messages from processes to connected clients.
-    /// </summary>
     public class LogStreamService : IEnvelopeStreamService, IAsyncDisposable
     {
-        private record ChannelInfo(Channel<string> Chan, FixedSizedQueue<string> History);
+        // Holds the shared history AND the subscriber list for each topic
+        private class TopicData
+        {
+            public FixedSizedQueue<string> History { get; } = new(50);
+            public List<Channel<string>> Subscribers { get; } = new();
+        }
+        IAsyncEnumerable<Envelope> IEnvelopeStreamService.StreamAsync(string topic)
+    => StreamEnvelopes(topic);
 
-        private readonly ConcurrentDictionary<string, ChannelInfo> _channels = new();
+        private readonly ConcurrentDictionary<string, TopicData> _topics = new();
 
+        // Called whenever a new log message arrives
         public void Push(string serviceName, string message)
         {
             if (message == null) return;
 
-            var info = _channels.GetOrAdd(serviceName, _ =>
+            var data = _topics.GetOrAdd(serviceName, _ => new TopicData());
+            data.History.Enqueue(message);
+
+            // broadcast to every subscriber
+            lock (data.Subscribers)
             {
-                var options = new BoundedChannelOptions(1000)
-                {
-                    SingleReader = false,
-                    SingleWriter = false,
-                    FullMode = BoundedChannelFullMode.Wait
-                };
-                return new ChannelInfo(
-                    Channel.CreateBounded<string>(options),
-                    new FixedSizedQueue<string>(50)
-                );
-            });
-
-            info.History.Enqueue(message);
-            info.Chan.Writer.TryWrite(message);
-        }
-        // internal push of a raw JSON envelope
-        private void PushRaw(string topic, string envelopeJson)
-        {
-            var info = _channels.GetOrAdd(topic, _ =>
-            {
-                var options = new BoundedChannelOptions(1000)
-                {
-                    SingleReader = false,
-                    SingleWriter = false,
-                    FullMode = BoundedChannelFullMode.Wait
-                };
-                return new ChannelInfo(
-                    Channel.CreateBounded<string>(options),
-                    new FixedSizedQueue<string>(50)
-                );
-            });
-
-            info.History.Enqueue(envelopeJson);
-            info.Chan.Writer.TryWrite(envelopeJson);
-        }
-
-        public async IAsyncEnumerable<string> StreamRawAsync(string serviceName)
-        {
-            // always get or create the channel even if nobody has pushed yet
-            var info = _channels.GetOrAdd(serviceName, _ =>
-            {
-                var options = new BoundedChannelOptions(1000)
-                {
-                    SingleReader = false,
-                    SingleWriter = false,
-                    FullMode = BoundedChannelFullMode.Wait
-                };
-                return new ChannelInfo(
-                    Channel.CreateBounded<string>(options),
-                    new FixedSizedQueue<string>(50)
-                );
-            });
-
-            // 1) replay history
-            foreach (var msg in info.History.Items)
-                yield return msg;
-
-            // 2) then live‐tail forever
-            var reader = info.Chan.Reader;
-            while (await reader.WaitToReadAsync())
-            {
-                while (reader.TryRead(out var msg))
-                    yield return msg;
+                foreach (var ch in data.Subscribers.ToArray())
+                    // best-effort: if a channel is full/closed, ignore it
+                    ch.Writer.TryWrite(message);
             }
         }
-        public ValueTask DisposeAsync()
+
+        // For raw‐JSON envelopes
+        private void PushRaw(string topic, string envelopeJson)
+            => Push(topic, envelopeJson);
+
+        // The SSE endpoint uses this to get a per‐client stream
+        public async IAsyncEnumerable<string> StreamRawAsync(string serviceName)
         {
-            foreach (var info in _channels.Values)
-                info.Chan.Writer.Complete();
-            return ValueTask.CompletedTask;
+            var data = _topics.GetOrAdd(serviceName, _ => new TopicData());
+
+            // 1) create a dedicated channel for this subscriber
+            var channel = Channel.CreateUnbounded<string>();
+            lock (data.Subscribers)
+            {
+                data.Subscribers.Add(channel);
+            }
+
+            try
+            {
+                // 2) replay the shared history into this one channel
+                foreach (var msg in data.History.Items)
+                    yield return msg;
+
+                // 3) then live-tail from this channel alone
+                var reader = channel.Reader;
+                while (await reader.WaitToReadAsync())
+                {
+                    while (reader.TryRead(out var msg))
+                        yield return msg;
+                }
+            }
+            finally
+            {
+                // clean up when the client disconnects
+                lock (data.Subscribers)
+                {
+                    data.Subscribers.Remove(channel);
+                }
+                channel.Writer.Complete();
+            }
         }
 
-        // public API for pushing a strongly-typed payload
+        // Envelope‐typed API
         void IEnvelopeStreamService.Push<T>(string topic, T payload)
         {
             JsonElement element = payload switch
@@ -107,27 +90,30 @@ namespace Orchestrator.IPC
                 JsonElement je => je,
                 _ => JsonSerializer.SerializeToElement(payload)
             };
-
             var env = new Envelope(topic, typeof(T).FullName!, element);
-
-            // now serialize your envelope (the Payload will be in‐lined as raw JSON)
-            var envJson = JsonSerializer.Serialize(env);
-            // push envJson into your raw‐string channel…
-            PushRaw(topic, envJson);
+            var json = JsonSerializer.Serialize(env);
+            PushRaw(topic, json);
         }
 
-        // interface implementation: deserialize each raw JSON into Envelope
-        IAsyncEnumerable<Envelope> IEnvelopeStreamService.StreamAsync(string topic)
+        private async IAsyncEnumerable<Envelope> StreamEnvelopes(string topic)
         {
-            return InternalStream();
-            async IAsyncEnumerable<Envelope> InternalStream()
+            await foreach (var raw in StreamRawAsync(topic))
             {
-                await foreach (var raw in StreamRawAsync(topic))
-                {
-                    yield return JsonSerializer.Deserialize<Envelope>(raw)!;
-                }
+                yield return JsonSerializer.Deserialize<Envelope>(raw)!;
             }
         }
+        public ValueTask DisposeAsync()
+        {
+            // Close every subscriber channel
+            foreach (var data in _topics.Values)
+            {
+                lock (data.Subscribers)
+                {
+                    foreach (var ch in data.Subscribers)
+                        ch.Writer.Complete();
+                }
+            }
+            return ValueTask.CompletedTask;
+        }
     }
-
 }

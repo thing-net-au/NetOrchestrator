@@ -308,9 +308,23 @@ public void ReceiveSupervisorLogChunk(string chunk)
     [JSInvokable]
     public void ReceiveLogChunk(string chunk)
     {
-        logEntries.Add((DateTime.Now, chunk));
-        logConnected = true;
-        StateHasChanged();
+        try
+        {
+            int MaxLogEntries = 500;
+            var message = JsonSerializer.Deserialize<ConsoleLogMessage>(chunk);
+            if (message is not null)
+            {
+                if (logEntries.Count >= MaxLogEntries)
+                    logEntries.RemoveAt(0);
+                logEntries.Add((message.Timestamp, message.Details));
+                logConnected = true;
+                StateHasChanged();
+            }
+        }
+        catch (JsonException ex)
+        {
+            Console.Error.WriteLine($"Failed to parse supervisor log chunk: {ex.Message}");
+        }
     }
 
     [JSInvokable]
