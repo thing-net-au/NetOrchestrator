@@ -99,6 +99,20 @@ namespace Orchestrator.WebApi
                 }
             });
 
+            // SSE for ServiceStatus updates
+            app.MapGet("/api/services/stream", async ctx =>
+            {
+                var stream = ctx.RequestServices.GetRequiredService<IEnvelopeStreamService>();
+                ctx.Response.Headers.Add("Content-Type", "text/event-stream");
+
+                await foreach (var env in stream.StreamAsync("ServiceStatus"))
+                {
+                    var status = JsonSerializer.Deserialize<ServiceStatus>(env.Payload.GetRawText())!;
+                    var json = JsonSerializer.Serialize(status);
+                    await ctx.Response.WriteAsync($"data: {json}\n\n");
+                    await ctx.Response.Body.FlushAsync();
+                }
+            });
             // SSE for InternalStatus (still envelope-based)
             app.MapGet("/api/status/stream", async ctx =>
             {

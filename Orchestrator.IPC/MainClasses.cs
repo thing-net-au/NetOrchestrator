@@ -259,6 +259,11 @@ namespace Orchestrator.IPC
         private readonly Channel<T> _outgoing = Channel.CreateUnbounded<T>();
         private Task? _senderTask;
         private CancellationTokenSource? _senderCts;
+        private bool _disposed;
+
+        public event Action<Exception?>? Disconnected;
+
+        public bool IsConnected => _client?.Connected == true && !_disposed;
 
         public event Action<T> MessageReceived;
 
@@ -270,6 +275,7 @@ namespace Orchestrator.IPC
 
         public async Task ConnectAsync(int timeoutMs = 5000)
         {
+            _disposed = false;
             _client = new TcpClient();
             using var cts = new CancellationTokenSource(timeoutMs);
             await _client.ConnectAsync(_host, _port);
@@ -302,6 +308,7 @@ namespace Orchestrator.IPC
 
         private async Task ReceiveLoopAsync()
         {
+            Exception? ex = null;
             try
             {
                 string? line;
@@ -315,9 +322,17 @@ namespace Orchestrator.IPC
                     }
                 }
             }
-            catch
+            catch (Exception e)
             {
-                // swallow
+                ex = e;
+            }
+            finally
+            {
+                if (!_disposed)
+                {
+                    Dispose();
+                    Disconnected?.Invoke(ex);
+                }
             }
         }
 
@@ -364,6 +379,7 @@ namespace Orchestrator.IPC
 
         public void Dispose()
         {
+            _disposed = true;
             _senderCts?.Cancel();
             _writer?.Dispose();
             _reader?.Dispose();
