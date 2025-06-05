@@ -19,6 +19,7 @@ namespace Orchestrator.WebApi
         private readonly IOptions<IpcSettings> _opts;
 
         private TcpJsonClient<Envelope> _client;
+        private const int _reconnectDelayMs = 10_000;
         private CancellationTokenSource _cts;
 
         public StartupJsonClients(
@@ -33,46 +34,61 @@ namespace Orchestrator.WebApi
             _opts = opts;
         }
 
+        private void HandleEnvelope(Envelope env)
+        {
+            switch (env.Topic.ToLowerInvariant())
+            {
+                case "hostheartbeat":
+                    // swallow for now
+                    break;
+                case "servicestatus":
+                    var status = env.Payload.Deserialize<ServiceStatus>();
+                    if (status != null)
+                        _envelopes.Push("ServiceStatus", status);
+                    break;
+                case "consolelogmessage":
+                    _logger.LogInformation("Received envelope: {Topic} {Payload}", env.Topic, env.Payload);
+                    var msg = env.Payload.Deserialize<ConsoleLogMessage>();
+                    if (msg == null)
+                    {
+                        _logger.LogError($"Failed to deserialize ConsoleLogMessage from {env.Payload}");
+                        break;
+                    }
+                    _consoleMessages.Push(msg.Name, msg);
+                    break;
+                default:
+                    _logger.LogError($"topic: {env.Topic} not found. message {env.Payload}");
+                    break;
+            }
+        }
+
+        private void ConfigureClient(TcpJsonClient<Envelope> client)
+        {
+            client.MessageReceived += HandleEnvelope;
+            client.Disconnected += async ex => await OnClientDisconnected(ex);
+        }
+
+        private async Task OnClientDisconnected(Exception? ex)
+        {
+            if (_cts.IsCancellationRequested) return;
+            _logger.LogWarning(ex, "Envelope stream disconnected; attempting to reconnect...");
+
+            _client.Dispose();
+            await Task.Delay(_reconnectDelayMs, _cts.Token).ContinueWith(_ => { });
+
+            var cfg = _opts.Value;
+            _client = new TcpJsonClient<Envelope>(cfg.Host, cfg.LogPort);
+            ConfigureClient(_client);
+            _ = ConnectWithRetry(_client, "EnvelopeStream", _cts.Token);
+        }
+
         public Task StartAsync(CancellationToken cancellationToken)
         {
             _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var cfg = _opts.Value;
 
             _client = new TcpJsonClient<Envelope>(cfg.Host, cfg.LogPort);
-            _client.MessageReceived += env =>
-            {
-                // forward every envelope onto its topic
-                //_envelopes.Push(env.Topic, env);
-                switch (env.Topic.ToLowerInvariant())
-                {
-                    case "hostheartbeat":
-                        //swallow for now
-                        break;
-                   case "servicestatus":
-                        var status = env.Payload.Deserialize<ServiceStatus>();
-                        if (status != null)
-                            _envelopes.Push("ServiceStatus", status);
-                        break;
-                    case "consolelogmessage":
-                        //Convert to ConsoleLogMessage
-                   _logger.LogInformation("Received envelope: {Topic} {Payload}", env.Topic, env.Payload);
-                     var msg = env.Payload.Deserialize<ConsoleLogMessage>();
-                        if (msg == null)
-                        {
-                            _logger.LogError($"Failed to deserialize ConsoleLogMessage from {env.Payload}");
-                            break;
-                        }
-                        // forward to the console message stream
-                        _consoleMessages.Push(msg.Name, msg);
-                        break;
-                    default:
-                        _logger.LogError($"topic: {env.Topic} not found. message {env.Payload}");
-                        break;
-
-                }
-            };
-
-            // Only one TCP client now
+            ConfigureClient(_client);
             _ = ConnectWithRetry(_client, "EnvelopeStream", _cts.Token);
 
             return Task.CompletedTask;
