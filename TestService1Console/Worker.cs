@@ -19,7 +19,7 @@ namespace TestService1Console
                     Repeat++;
                     _logger.LogInformation("Worker Iteration {Repeat} running at: {time}",Repeat, DateTimeOffset.Now);
                 }
-                await Task.Delay(500, stoppingToken);
+                await Task.Delay(100, stoppingToken);
             }
         }
     }

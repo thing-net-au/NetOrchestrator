@@ -72,7 +72,24 @@ namespace Orchestrator.WebApi
 
             // Only one TCP client now
             _ = ConnectWithRetry(_client, "EnvelopeStream", _cts.Token);
-
+            // in your StartupJsonClients, after connecting:
+    /*        _ = Task.Run(async () =>
+            {
+                while (!_cts.Token.IsCancellationRequested)
+                {
+                    // e.g. a dummy Envelope with topic "ping"
+                    var ping = new Envelope("ping", new { Time = DateTime.UtcNow });
+                    await _client.SendAsync(ping);
+                    var pingMessage = new ConsoleLogMessage()
+                    {
+                        Details = "Ping Sent from WEBAPI to Supervisor."
+                    };
+                    //_consoleMessages.Push("_supervisor", ConsoleLogMessage();
+                    await Task.Delay(TimeSpan.FromMinutes(1), _cts.Token)
+                               .ContinueWith(_ => { });
+                }
+            });
+    */
             return Task.CompletedTask;
         }
 

@@ -5,6 +5,8 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection.PortableExecutable;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
@@ -23,34 +25,61 @@ namespace Orchestrator.IPC
 
     public class MessageQueue<T>
     {
-        private readonly ConcurrentQueue<T> _queue = new ConcurrentQueue<T>();
-        private int _max;
+        private readonly Channel<T> _channel;
+        private readonly int _capacity;
+        private readonly object _lock = new();
+        private readonly Queue<T> _history;
 
-        public MessageQueue(int maxHistory) => _max = maxHistory;
-
-        public void Enqueue(T item)
+        public MessageQueue(int capacity)
         {
-            _queue.Enqueue(item);
-            while (_queue.Count > _max && _queue.TryDequeue(out _)) { }
+            _capacity = capacity;
+            _history = new Queue<T>(capacity);
+            var opts = new BoundedChannelOptions(capacity)
+            {
+                SingleReader = false,
+                SingleWriter = false,
+                FullMode = BoundedChannelFullMode.DropOldest  // drop the oldest when full
+            };
+            _channel = Channel.CreateBounded<T>(opts);
         }
 
+        /// <summary>Enqueue an item, dropping the oldest if we exceed capacity.</summary>
+        public void Enqueue(T item)
+        {
+            lock (_lock)
+            {
+                if (_history.Count == _capacity)
+                    _history.Dequeue();
+                _history.Enqueue(item);
+            }
+            // This will never block (FullMode=DropOldest), and preserves FIFO
+            _channel.Writer.TryWrite(item);
+        }
+
+        /// <summary>Get a snapshot of the last up to <paramref name="count"/> items, oldest first.</summary>
         public T[] GetHistory(int count)
         {
-            var arr = _queue.ToArray();
-            int take = Math.Min(count, arr.Length);
-            var res = new T[take];
-            Array.Copy(arr, arr.Length - take, res, 0, take);
-            return res;
+            lock (_lock)
+            {
+                return _history
+                    .Take(Math.Min(count, _history.Count))
+                    .ToArray();
+            }
         }
 
         /// <summary>
-        /// Change the maximum number of messages kept in history.
+        /// Returns an IAsyncEnumerable over all history _then_ live items in order.
         /// </summary>
-        public void SetMaxHistory(int maxHistory)
+        public async IAsyncEnumerable<T> ReadAllAsync([EnumeratorCancellation] CancellationToken ct = default)
         {
-            _max = maxHistory;
-            // Optionally trim if current count > new max:
-            while (_queue.Count > _max && _queue.TryDequeue(out _)) { }
+            // 1. Replay history
+            var snapshot = GetHistory(_capacity);
+            foreach (var item in snapshot)
+                yield return item;
+
+            // 2. Then tail the channel for live items
+            await foreach (var item in _channel.Reader.ReadAllAsync(ct))
+                yield return item;
         }
     }
 
@@ -144,58 +173,38 @@ namespace Orchestrator.IPC
             }
         }
 
+        private readonly SemaphoreSlim _readSemaphore = new(1, 1);
+
         private async Task HandleClientAsync(int id, StreamReader reader)
         {
             try
             {
                 while (_running)
                 {
+                    // begin a single read
                     var readTask = reader.ReadLineAsync();
                     var timeout = Task.Delay(TimeSpan.FromMinutes(5));
                     var completed = await Task.WhenAny(readTask, timeout);
 
                     if (completed == timeout)
                     {
-                        // idle period; keep the connection open
-                        continue;
+                        // idle—stop reading and exit (or you can break and let outer code re-open)
+                     //   continue;
+                     //   break;
                     }
 
+                    // now safely await the one outstanding read
                     var line = await readTask;
-                    if (line == null)
-                        break;    // client has truly disconnected
+                    if (line == null) break;
 
-                    // 1) raise the raw‐JSON event
-                   // RawMessageReceived?.Invoke(line);
-
-                    // 2) deserialize into your T
-                    T msg;
-                    try
-                    {
-                        msg = line.FromJson<T>();
-                    }
-                    catch (JsonException)
-                    {
-                        // invalid JSON—skip and continue listening
-                        continue;
-                    }
-
-                    // 3) enqueue into history & fire typed event
+                    var msg = line.FromJson<T>();
                     _history.Enqueue(msg);
-                   // MessageReceived?.Invoke(msg);
-
-                    // 4) broadcast to everyone *but* the sender
                     await BroadcastExceptAsync(msg, id);
                 }
             }
-            catch( Exception e)
-            {
-                var i = e;
-
-                // swallow any unexpected IO errors
-            }
-            finally
-            {
-                // clean up on true disconnect
+            catch { }
+            finally {
+                // clean up on disconnect
                 if (_clients.TryRemove(id, out var kv))
                 {
                     kv.Writer.Dispose();
@@ -206,6 +215,7 @@ namespace Orchestrator.IPC
 
 
 
+
         public async Task BroadcastAsync(T message)
         {
             var json = message.ToJson();
@@ -213,10 +223,11 @@ namespace Orchestrator.IPC
             {
                 var (client, writer) = kv.Value;
                 if (!client.Connected) continue;
-                try { 
-                    await writer.WriteLineAsync(json); 
+                try
+                {
+                    await writer.WriteLineAsync(json);
                     await writer.FlushAsync();
-                    await Task.Delay(10); 
+                    await Task.Delay(10);
                 }
                 catch
                 {
@@ -235,13 +246,7 @@ namespace Orchestrator.IPC
             _replayCount = replayCount;
         }
 
-        /// <summary>
-        /// Adjust how many messages are kept in history.
-        /// </summary>
-        public void SetHistorySize(int historySize)
-        {
-            _history.SetMaxHistory(historySize);
-        }
+
     }
 
     public class TcpJsonClient<T> : IDisposable
@@ -268,24 +273,46 @@ namespace Orchestrator.IPC
             _client = new TcpClient();
             using var cts = new CancellationTokenSource(timeoutMs);
             await _client.ConnectAsync(_host, _port);
+            if (_client.Connected == false)
+                return;
             var stream = _client.GetStream();
             _reader = new StreamReader(stream);
             _writer = new StreamWriter(stream) { AutoFlush = true };
             _senderCts?.Cancel();
             _senderCts = new CancellationTokenSource();
             _senderTask = Task.Run(() => SenderLoopAsync(_senderCts.Token));
-            _ = Task.Run(ReceiveLoopAsync);
-      }
+            
+            StartReceiving();
+        }
+
+        private readonly object _msgLock = new();
+        private Task? _receiveTask;
+        private readonly object _receiveLock = new();
+
+        public void StartReceiving()
+        {
+            lock (_receiveLock)
+            {
+                if (_receiveTask == null || _receiveTask.IsCompleted)
+                {
+                    _receiveTask = Task.Run(ReceiveLoopAsync);
+                }
+            }
+        }
 
         private async Task ReceiveLoopAsync()
         {
             try
             {
-                string line;
+                string? line;
                 while ((line = await _reader.ReadLineAsync()) != null)
                 {
                     var msg = line.FromJson<T>();
-                    MessageReceived?.Invoke(msg);
+                    // only lock around the event invocation, not the read
+                    lock (_msgLock)
+                    {
+                        MessageReceived?.Invoke(msg);
+                    }
                 }
             }
             catch
@@ -294,42 +321,46 @@ namespace Orchestrator.IPC
             }
         }
 
+
         public Task SendAsync(T message)
         {
-            return _outgoing.Writer.WriteAsync(message).AsTask();
+                        return _outgoing.Writer.WriteAsync(message).AsTask();
 
             if (_writer == null)
                 throw new InvalidOperationException("Not connected");
-//            await _writer.WriteLineAsync(message.ToJson());
+            //            await _writer.WriteLineAsync(message.ToJson());
             return _outgoing.Writer.WriteAsync(message).AsTask();
 
         }
- private async Task SenderLoopAsync(CancellationToken ct)
-{
-    await foreach (var msg in _outgoing.Reader.ReadAllAsync(ct))
-    {
-        string json;
-        try
+        private async Task SenderLoopAsync(CancellationToken ct)
         {
-            json = msg.ToJson();
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"[SenderLoop] Serialization failed: {ex.Message}");
-            continue; // skip bad message, keep going
-        }
+            await foreach (var msg in _outgoing.Reader.ReadAllAsync(ct))
+            {
+                if (!_client.Connected)
+                    await ConnectAsync();
+                string json;
+                try
+                {
+                    json = msg.ToJson();
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[SenderLoop] Serialization failed: {ex.Message}");
+                    continue; // skip bad message, keep going
+                }
 
-        try
-        {
-            await _writer.WriteLineAsync(json);
+                try
+                {
+                    await _writer.WriteLineAsync(json);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[SenderLoop] Write failed: {ex.Message}");
+                    break;
+                }
+            }
+
         }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"[SenderLoop] Write failed: {ex.Message}");
-            break;
-        }
-    }
-}
 
         public void Dispose()
         {
@@ -366,8 +397,8 @@ namespace Orchestrator.IPC
         }
 
     }
- 
-public static class TcpJsonClientExtensions
+
+    public static class TcpJsonClientExtensions
     {
         public static IAsyncEnumerable<T> StreamAsync<T>(this TcpJsonClient<T> client, CancellationToken ct = default)
         {

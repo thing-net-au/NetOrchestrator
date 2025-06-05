@@ -14,24 +14,12 @@
 </head>
 
 <body>
+    <component type="typeof(App)" render-mode="Server" />
     <Routes />
     <script src="_framework/blazor.web.js"></script>
     <script src="_framework/blazor.server.js"></script>
     <script src="/js/logStream.js" asp-append-version="true"></script>
-    <script>
-        app.UseStaticFiles(new StaticFileOptions
-{
-  OnPrepareResponse = ctx =>
-  {
-    var path = ctx.File.PhysicalPath;
-    if (path.EndsWith("logStream.js", StringComparison.OrdinalIgnoreCase))
-    {
-      ctx.Context.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
-    }
-  }
-});
 
-</script>
 </body>
 
 </html>
