@@ -28,6 +28,14 @@
     }
 </div>
 
+@if (services != null)
+{
+    <div class="mb-3">
+        <span><strong>@RunningServiceCount</strong> / <strong>@TotalServiceCount</strong> services running</span>
+        <span class="ms-3"><strong>@TotalRunningInstances</strong> total instances</span>
+    </div>
+}
+
 @if (services is null)
 {
     <p><em>Loading…</em></p>
@@ -137,6 +145,10 @@ else
     private List<(DateTime Timestamp, string Message)> logEntries = new();
     private List<(DateTime Timestamp, string Message)> logSupervisor = new();
 
+    private int TotalServiceCount => services?.Count ?? 0;
+    private int RunningServiceCount => services?.Count(s => s.State == State.Running) ?? 0;
+    private int TotalRunningInstances => services?.Sum(s => s.RunningInstances) ?? 0;
+
     private DotNetObjectReference<Index>? statusRef;
     private DotNetObjectReference<Index>? logRef;
     private DotNetObjectReference<Index>? supervisorLogsRef;
@@ -156,6 +168,7 @@ protected override async Task OnAfterRenderAsync(bool firstRender)
     protected override async Task OnInitializedAsync()
     {
         await Refresh();
+        await ConnectStatus();
     }
 
     private async Task ConnectStatus()
@@ -164,7 +177,7 @@ protected override async Task OnAfterRenderAsync(bool firstRender)
         statusRef = DotNetObjectReference.Create(this);
 
         var apiBase = OrchestratorConfig.Current.Web.ApiBaseUrl.TrimEnd('/');
-        var statusUrl = $"{apiBase}/api/status/stream";
+        var statusUrl = $"{apiBase}/api/services/stream";
 
         await JS.InvokeVoidAsync("logStream.status.open", statusRef, statusUrl);
         statusConnected = true;

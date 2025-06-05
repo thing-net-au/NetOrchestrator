@@ -49,7 +49,9 @@ namespace Orchestrator.WebApi
                         //swallow for now
                         break;
                    case "servicestatus":
-                        //swallow for now
+                        var status = env.Payload.Deserialize<ServiceStatus>();
+                        if (status != null)
+                            _envelopes.Push("ServiceStatus", status);
                         break;
                     case "consolelogmessage":
                         //Convert to ConsoleLogMessage
