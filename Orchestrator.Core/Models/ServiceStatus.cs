@@ -1,18 +1,23 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.Text.Json.Serialization;
 
 namespace Orchestrator.Core.Models
 {
     public class ServiceStatus
     {
-        public string Name { get; set; }
-        public int RunningInstances { get; set; }
-        public State State { get; set; }
-        public DateTime? LastReportAt { get; set; }
-        public bool? LastHealthy { get; set; }
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = default!;
 
+        [JsonPropertyName("runningInstances")]
+        public int RunningInstances { get; set; }
+
+        [JsonPropertyName("state")]
+        public State State { get; set; } = State.Unknown;
+
+        [JsonPropertyName("lastReportAt")]
+        public DateTime? LastReportAt { get; set; }
+
+        [JsonPropertyName("lastHealthy")]
+        public bool? LastHealthy { get; set; }
     }
 }
