@@ -157,7 +157,7 @@ else
 
 protected override async Task OnAfterRenderAsync(bool firstRender)
 {
-    if (!_interactive && JS is IJSInProcessRuntime)
+    if (firstRender)
     {
         _interactive = true;
         await StartSupervisorLogs();
