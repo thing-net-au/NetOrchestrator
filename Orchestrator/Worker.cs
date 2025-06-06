@@ -2,6 +2,7 @@
 using Orchestrator.Core.Models;
 using Orchestrator.IPC;
 using System.Text.Json;
+using Orchestrator.Core.Extensions;
 
 public class Worker : BackgroundService
 {
