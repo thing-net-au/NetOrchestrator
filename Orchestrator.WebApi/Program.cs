@@ -57,7 +57,14 @@ namespace Orchestrator.WebApi
 
             // 5) swagger + CORS
             builder.Services.AddEndpointsApiExplorer();
-            builder.Services.AddSwaggerGen(c => c.SwaggerDoc("v1", new() { Title = "Orchestrator API", Version = "v1" }));
+            builder.Services.AddSwaggerGen(options =>
+            {
+                options.SwaggerDoc("v1", new OpenApiInfo
+                {
+                    Title = "Orchestrator API",
+                    Version = "v1"
+                });
+            });
             builder.Services.AddCors(o => o.AddPolicy("AllowAll", p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
 
             builder.WebHost.ConfigureKestrel(opts =>
