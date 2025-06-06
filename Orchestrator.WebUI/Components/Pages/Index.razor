@@ -155,33 +155,38 @@ else
 
     private bool _interactive;
 
-protected override async Task OnAfterRenderAsync(bool firstRender)
-{
-    if (firstRender)
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        _interactive = true;
-        await StartSupervisorLogs();
-    }
+        if (firstRender)
+        {
+            _interactive = true;
+            await StartSupervisorLogs();
+        await ConnectStatus();
+        }
 
     }
 
     protected override async Task OnInitializedAsync()
     {
         await Refresh();
-        await ConnectStatus();
     }
 
     private async Task ConnectStatus()
     {
-        statusRef?.Dispose();
-        statusRef = DotNetObjectReference.Create(this);
+            statusRef?.Dispose();
+            statusRef = DotNetObjectReference.Create(this);
 
-        var apiBase = OrchestratorConfig.Current.Web.ApiBaseUrl.TrimEnd('/');
-        var statusUrl = $"{apiBase}/api/services/stream";
+            var baseUri = new Uri(Nav.BaseUri);
+            var apiPort = OrchestratorConfig.Current.Web.ApiPort;
+            var apiOrigin = new UriBuilder(baseUri.Scheme, baseUri.Host, apiPort).Uri;
 
-        await JS.InvokeVoidAsync("logStream.status.open", statusRef, statusUrl);
-        statusConnected = true;
-        StateHasChanged();
+            //   var apiBase = OrchestratorConfig.Current.Web.ApiBaseUrl.TrimEnd('/');
+            var statusUrl = new Uri(apiOrigin, "/api/services/stream").ToString();
+
+            await JS.InvokeVoidAsync("logStream.status.open", statusRef, statusUrl);
+            statusConnected = true;
+            StateHasChanged();
+        
     }
 
     private async Task DisconnectStatus()
