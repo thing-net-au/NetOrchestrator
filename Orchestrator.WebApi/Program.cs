@@ -109,7 +109,6 @@ namespace Orchestrator.WebApi
 
                 await foreach (var status in stream.StreamAsync<ServiceStatus>("ServiceStatus"))
                 {
-                    var status = JsonSerializer.Deserialize<ServiceStatus>(env.Payload.GetRawText())!;
                     var json = JsonSerializer.Serialize(status);
                     await ctx.Response.WriteAsync($"data: {json}\n\n");
                     await ctx.Response.Body.FlushAsync();

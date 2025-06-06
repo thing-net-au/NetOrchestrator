@@ -172,11 +172,14 @@ protected override async Task OnAfterRenderAsync(bool firstRender)
 
     private async Task ConnectStatus()
     {
-            statusRef?.Dispose();
+        var baseUri = new Uri(Nav.BaseUri);
+        var apiPort = OrchestratorConfig.Current.Web.ApiPort;
+        var apiOrigin = new UriBuilder(baseUri.Scheme, baseUri.Host, apiPort).Uri;
+
+        statusRef?.Dispose();
             statusRef = DotNetObjectReference.Create(this);
 
-        var apiBase = OrchestratorConfig.Current.Web.ApiBaseUrl.TrimEnd('/');
-        var statusUrl = $"{apiBase}/api/services/stream";
+        var statusUrl = new Uri(apiOrigin, "/api/services/stream").ToString();
 
             await JS.InvokeVoidAsync("logStream.status.open", statusRef, statusUrl);
             statusConnected = true;
