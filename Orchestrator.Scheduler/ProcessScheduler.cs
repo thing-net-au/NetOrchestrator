@@ -51,9 +51,8 @@ namespace Orchestrator.Scheduler
                 var statuses = (await _supervisor.ListStatusAsync()).ToList();
                 foreach (var status in statuses)
                 {
-                    // wrap each ServiceStatus in an Envelope:
-                    var env = new Envelope("ServiceStatus", status);
-                                        _envelopes.Push("ServiceStatus", env);
+                    // push as typed payload for easier consumption
+                    _envelopes.Push("ServiceStatus", status);
                 }
 
                 foreach (var svcConfig in OrchestratorConfig.Current.Services.Values)

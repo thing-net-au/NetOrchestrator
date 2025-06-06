@@ -120,10 +120,8 @@ namespace Orchestrator.WebApi
                 var logs = ctx.RequestServices.GetRequiredService<IEnvelopeStreamService>();
                 ctx.Response.Headers.Add("Content-Type", "text/event-stream");
 
-                await foreach (var env in logs.StreamAsync("HostHeartBeat"))
+                await foreach (var status in logs.StreamAsync<InternalStatus>("HostHeartBeat"))
                 {
-                    // You can emit the full envelope, or just the payload:
-                    var status = JsonSerializer.Deserialize<InternalStatus>(env.Payload.GetRawText())!;
                     var json = JsonSerializer.Serialize(status);
                     await ctx.Response.WriteAsync($"data: {json}\n\n");
                     await ctx.Response.Body.FlushAsync();
