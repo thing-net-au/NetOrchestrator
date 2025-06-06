@@ -4,6 +4,7 @@ using Orchestrator.Core.Interfaces;
 using Orchestrator.Core.Models;
 using Orchestrator.IPC;
 using System.Text.Json;
+using Orchestrator.Core.Extensions;
 
 namespace Orchestrator
 {

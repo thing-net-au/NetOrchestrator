@@ -157,18 +157,17 @@ else
 
 protected override async Task OnAfterRenderAsync(bool firstRender)
 {
-    if (firstRender)
+    if (!_interactive && JS is IJSInProcessRuntime)
     {
         _interactive = true;
         await StartSupervisorLogs();
+        await ConnectStatus();
     }
-
-    }
+}
 
     protected override async Task OnInitializedAsync()
     {
         await Refresh();
-        await ConnectStatus();
     }
 
     private async Task ConnectStatus()
@@ -176,8 +175,10 @@ protected override async Task OnAfterRenderAsync(bool firstRender)
         statusRef?.Dispose();
         statusRef = DotNetObjectReference.Create(this);
 
-        var apiBase = OrchestratorConfig.Current.Web.ApiBaseUrl.TrimEnd('/');
-        var statusUrl = $"{apiBase}/api/services/stream";
+        var baseUri = new Uri(Nav.BaseUri);
+        var apiPort = OrchestratorConfig.Current.Web.ApiPort;
+        var apiOrigin = new UriBuilder(baseUri.Scheme, baseUri.Host, apiPort).Uri;
+        var statusUrl = new Uri(apiOrigin, "/api/services/stream").ToString();
 
         await JS.InvokeVoidAsync("logStream.status.open", statusRef, statusUrl);
         statusConnected = true;
