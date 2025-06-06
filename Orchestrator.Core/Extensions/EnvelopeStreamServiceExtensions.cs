@@ -2,6 +2,7 @@ using Orchestrator.Core.Interfaces;
 using Orchestrator.Core.Models;
 using System.Collections.Generic;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 
 namespace Orchestrator.Core.Extensions
 {
@@ -14,7 +15,8 @@ namespace Orchestrator.Core.Extensions
         /// </summary>
         public static async IAsyncEnumerable<T> StreamAsync<T>(
             this IEnvelopeStreamService svc,
-            string topic)
+            string topic,
+            ILogger? logger = null)
         {
             string expectedType = typeof(T).FullName!;
 
@@ -37,8 +39,11 @@ namespace Orchestrator.Core.Extensions
                 {
                     result = envelope.Payload.Deserialize<T>();
                 }
-                catch (JsonException)
+                catch (JsonException ex)
                 {
+                    logger?.LogWarning(ex,
+                        "Failed to deserialize {Type} from topic {Topic}. Payload: {Payload}",
+                        expectedType, topic, envelope.Payload.GetRawText());
                     continue; // Skip invalid payloads
                 }
 

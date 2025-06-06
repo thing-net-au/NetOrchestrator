@@ -106,9 +106,11 @@ namespace Orchestrator.WebApi
             app.MapGet("/api/services/stream", async ctx =>
             {
                 var stream = ctx.RequestServices.GetRequiredService<IEnvelopeStreamService>();
+                var logger = ctx.RequestServices.GetRequiredService<ILoggerFactory>()
+                                 .CreateLogger("ServiceStatusStream");
                 ctx.Response.Headers.Add("Content-Type", "text/event-stream");
 
-                await foreach (var status in stream.StreamAsync<ServiceStatus>("ServiceStatus"))
+                await foreach (var status in stream.StreamAsync<ServiceStatus>("ServiceStatus", logger))
                 {
                     var json = JsonSerializer.Serialize(status);
                     await ctx.Response.WriteAsync($"data: {json}\n\n");
@@ -119,9 +121,11 @@ namespace Orchestrator.WebApi
             app.MapGet("/api/status/stream", async ctx =>
             {
                 var logs = ctx.RequestServices.GetRequiredService<IEnvelopeStreamService>();
+                var logger = ctx.RequestServices.GetRequiredService<ILoggerFactory>()
+                                 .CreateLogger("InternalStatusStream");
                 ctx.Response.Headers.Add("Content-Type", "text/event-stream");
 
-                await foreach (var status in logs.StreamAsync<InternalStatus>("HostHeartBeat"))
+                await foreach (var status in logs.StreamAsync<InternalStatus>("HostHeartBeat", logger))
                 {
                     var json = JsonSerializer.Serialize(status);
                     await ctx.Response.WriteAsync($"data: {json}\n\n");
