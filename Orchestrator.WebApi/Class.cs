@@ -36,6 +36,8 @@ namespace Orchestrator.WebApi
 
         private void HandleEnvelope(Envelope env)
         {
+            if (env == null || string.IsNullOrEmpty(env.Topic)) // null guard
+                return;
             switch (env.Topic.ToLowerInvariant())
             {
                 case "hostheartbeat":

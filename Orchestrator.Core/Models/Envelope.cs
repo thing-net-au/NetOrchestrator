@@ -1,56 +1,83 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Threading.Tasks;
 
 namespace Orchestrator.Core.Models
 {
     public class Envelope
     {
-        // parameterless ctor for deserialization
+        /// <summary>
+        /// Parameterless constructor for JSON deserialization.
+        /// </summary>
         public Envelope() { }
+
+        /// <summary>
+        /// Full constructor for rehydrating from JSON.
+        /// </summary>
         [JsonConstructor]
         public Envelope(
-            string Topic,
-            string Type,
-            JsonElement Payload,
-            DateTimeOffset Timestamp)
+            string topic,
+            string payloadType,
+            JsonElement payload,
+            DateTimeOffset timestamp)
         {
-            this.Topic = Topic;
-            this.Type = Type;
-            this.Payload = Payload;
-            this.Timestamp = Timestamp;
+            Topic = topic;
+            PayloadType = payloadType;
+            Payload = payload;
+            Timestamp = timestamp;
         }
 
+        /// <summary>
+        /// Creates a new envelope from a typed payload.
+        /// </summary>
         public Envelope(string topic, object payload)
         {
             Topic = topic;
             Payload = JsonSerializer.SerializeToElement(payload);
-            Type = payload.GetType().FullName!;
+            PayloadType = payload.GetType().FullName ?? "System.Object";
             Timestamp = DateTimeOffset.UtcNow;
         }
-        public Envelope(string topic, string type, JsonElement payload)
+
+        /// <summary>
+        /// Creates a new envelope from a raw JSON payload.
+        /// </summary>
+        public Envelope(string topic, string payloadType, JsonElement payload)
         {
             Topic = topic;
-            Payload = JsonSerializer.SerializeToElement(payload);
-            Type = type;
+            PayloadType = payloadType;
+            Payload = payload;
             Timestamp = DateTimeOffset.UtcNow;
         }
 
-        /// <summary>“Topic” or stream name—e.g. “WorkerStatus” or “MySubsystem”.</summary>
+        /// <summary>
+        /// “Topic” or stream name—e.g. “WorkerStatus” or “MySubsystem”.
+        /// </summary>
         public string Topic { get; set; } = default!;
 
-        /// <summary>The CLR type name of the payload.</summary>
-        public string Type { get; set; } = default!;
+        /// <summary>
+        /// The CLR type name of the payload.
+        /// </summary>
+        public string PayloadType { get; set; } = default!;
 
-        /// <summary>Payload in JSON form.</summary>
+        /// <summary>
+        /// Payload in raw JSON form.
+        /// </summary>
         public JsonElement Payload { get; set; }
 
-        /// <summary>When we stamped this envelope.</summary>
+        /// <summary>
+        /// Timestamp indicating when this envelope was created.
+        /// </summary>
         public DateTimeOffset Timestamp { get; set; }
-    }
 
+        /// <summary>
+        /// Deserialize the payload to a specific type.
+        /// </summary>
+        public T GetPayload<T>()
+        {
+            if (Payload.ValueKind == JsonValueKind.Undefined || Payload.ValueKind == JsonValueKind.Null)
+                throw new InvalidOperationException("Envelope payload is null or undefined.");
+
+            return Payload.Deserialize<T>()!;
+        }
+    }
 }

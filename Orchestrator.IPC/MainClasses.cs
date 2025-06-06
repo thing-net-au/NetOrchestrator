@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Hosting;
+using Orchestrator.Core.Models;
 using System;
 using System.Collections.Concurrent;
 using System.IO;
@@ -8,6 +9,7 @@ using System.Net.Sockets;
 using System.Reflection.PortableExecutable;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -16,11 +18,42 @@ namespace Orchestrator.IPC
 {
     public static class SerializationExtensions
     {
+        private static readonly JsonSerializerOptions DefaultOptions = new()
+        {
+            PropertyNameCaseInsensitive = true,
+            ReadCommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true
+        };
+
         public static string ToJson<T>(this T obj)
-            => JsonSerializer.Serialize(obj);
+        {
+            if (obj is Envelope env)
+            {
+                if (env.Payload.ValueKind == JsonValueKind.Undefined || env.Payload.ValueKind == JsonValueKind.Null)
+                {
+                    return "{}";
+                    throw new InvalidOperationException("Envelope.Payload is missing or null.");
+                }
+            }
+
+            return JsonSerializer.Serialize(obj, DefaultOptions);
+        }
 
         public static T FromJson<T>(this string json)
-            => JsonSerializer.Deserialize<T>(json);
+        {
+            if (string.IsNullOrWhiteSpace(json))
+                throw new ArgumentException("Input JSON string is null or empty.", nameof(json));
+
+            try
+            {
+                return JsonSerializer.Deserialize<T>(json, DefaultOptions)
+                       ?? throw new JsonException($"Deserialization of type {typeof(T).Name} returned null.");
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException($"Failed to deserialize JSON into {typeof(T).Name}: {ex.Message}", ex);
+            }
+        }
     }
 
     public class MessageQueue<T>
@@ -46,6 +79,8 @@ namespace Orchestrator.IPC
         /// <summary>Enqueue an item, dropping the oldest if we exceed capacity.</summary>
         public void Enqueue(T item)
         {
+            if (item == null)
+                return;
             lock (_lock)
             {
                 if (_history.Count == _capacity)
@@ -141,6 +176,7 @@ namespace Orchestrator.IPC
                 // Send history
                 foreach (var msg in _history.GetHistory(_replayCount))
                 {
+                    
                     var rawJson = JsonSerializer.Serialize(msg);
                     await writer.WriteLineAsync(rawJson);
                 }
@@ -199,6 +235,7 @@ namespace Orchestrator.IPC
 
                     var msg = line.FromJson<T>();
                     _history.Enqueue(msg);
+                    
                     await BroadcastExceptAsync(msg, id);
                 }
             }
