@@ -40,7 +40,8 @@ namespace Orchestrator.WebApi
             // 1) bind IpcSettings
             builder.Services.AddOptions();
             builder.Services.Configure<IpcSettings>(builder.Configuration.GetSection("Ipc"));
-            builder.Services.AddSingleton<TcpJsonClient<Envelope>>(sp => {
+            builder.Services.AddSingleton<TcpJsonClient<Envelope>>(sp =>
+            {
                 var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
                 return new TcpJsonClient<Envelope>(opts.Host, opts.LogPort);
             });
