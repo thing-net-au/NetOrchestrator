@@ -51,7 +51,7 @@ namespace Orchestrator.IPC
             }
             catch (JsonException ex)
             {
-                throw new InvalidOperationException($"Failed to deserialize JSON into {typeof(T).Name}: {ex.Message}", ex);
+               throw new InvalidOperationException($"Failed to deserialize JSON into {typeof(T).Name}: {ex.Message}", ex);
             }
         }
     }

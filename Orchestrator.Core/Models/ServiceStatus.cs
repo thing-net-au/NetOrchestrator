@@ -18,6 +18,6 @@ namespace Orchestrator.Core.Models
         public DateTime? LastReportAt { get; set; }
 
         [JsonPropertyName("lastHealthy")]
-        public bool? LastHealthy { get; set; }
+        public DateTime? LastHealthy { get; set; } = DateTime.MinValue;
     }
 }

@@ -38,29 +38,31 @@ namespace Orchestrator.WebApi
         {
             if (env == null || string.IsNullOrEmpty(env.Topic)) // null guard
                 return;
+            _logger.LogInformation("Received envelope: {Topic} {Payload}", env.Topic, env.Payload);
+
             switch (env.Topic.ToLowerInvariant())
             {
                 case "hostheartbeat":
                     var hb = env.Payload.Deserialize<WorkerStatus>();
                     if (hb != null)
                     {
-                        var internalStatus = new InternalStatus
-                        {
-                            Name = hb.ServiceName,
-                            IsHealthy = hb.Healthy,
-                            Details = hb.Message,
-                            Timestamp = hb.Timestamp.UtcDateTime
-                        };
-                        _envelopes.Push("HostHeartBeat", internalStatus);
+                        var wrapped = new Envelope("HostHeartBeat", hb);
+                        _envelopes.Push("HostHeartBeat", wrapped);
                     }
                     break;
                 case "servicestatus":
+             //       _logger.LogInformation("Received envelope: {Topic} {Payload}", env.Topic, env.Payload);
                     var status = env.Payload.Deserialize<ServiceStatus>();
                     if (status != null)
-                        _envelopes.Push("ServiceStatus", status);
+                    {
+                        {
+                            var wrapped = new Envelope("ServiceStatus", status);
+                            _envelopes.Push("ServiceStatus", wrapped);
+                        }
+                    }
                     break;
                 case "consolelogmessage":
-                    _logger.LogInformation("Received envelope: {Topic} {Payload}", env.Topic, env.Payload);
+        //            _logger.LogInformation("Received envelope: {Topic} {Payload}", env.Topic, env.Payload);
                     var msg = env.Payload.Deserialize<ConsoleLogMessage>();
                     if (msg == null)
                     {

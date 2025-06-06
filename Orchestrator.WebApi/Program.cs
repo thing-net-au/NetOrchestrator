@@ -132,10 +132,9 @@ namespace Orchestrator.WebApi
                                  .CreateLogger("InternalStatusStream");
                 ctx.Response.Headers.Add("Content-Type", "text/event-stream");
 
-                await foreach (var status in logs.StreamAsync<InternalStatus>("HostHeartBeat", logger))
+                await foreach (var status in logs.StreamAsync<WorkerStatus>("HostHeartBeat"))
                 {
-                    var json = JsonSerializer.Serialize(status);
-                    await ctx.Response.WriteAsync($"data: {json}\n\n");
+                    await ctx.Response.WriteAsync($"data: {status.ToJson()}\n\n");
                     await ctx.Response.Body.FlushAsync();
                 }
             });

@@ -116,7 +116,7 @@ public class Worker : BackgroundService
                 })
             });
             await _client.SendAsync(env);
-            await Task.Delay(TimeSpan.FromSeconds(1), ct);
+            await Task.Delay(TimeSpan.FromSeconds(30), ct);
         }
     }
 
