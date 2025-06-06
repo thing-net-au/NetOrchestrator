@@ -7,6 +7,7 @@ using Microsoft.OpenApi.Models;
 using Orchestrator.IPC;
 using Orchestrator.Core.Interfaces;
 using Orchestrator.Core.Models;
+using Orchestrator.Core.Extensions;
 using Orchestrator.Supervisor;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
@@ -106,10 +107,9 @@ namespace Orchestrator.WebApi
                 var stream = ctx.RequestServices.GetRequiredService<IEnvelopeStreamService>();
                 ctx.Response.Headers.Add("Content-Type", "text/event-stream");
 
-                //          await foreach (var env in stream.StreamAsync("ServiceStatus"))
                 await foreach (var status in stream.StreamAsync<ServiceStatus>("ServiceStatus"))
                 {
-                    //      var status = JsonSerializer.Deserialize<ServiceStatus>(env.Payload.GetRawText())!;
+                    var status = JsonSerializer.Deserialize<ServiceStatus>(env.Payload.GetRawText())!;
                     var json = JsonSerializer.Serialize(status);
                     await ctx.Response.WriteAsync($"data: {json}\n\n");
                     await ctx.Response.Body.FlushAsync();
@@ -120,11 +120,11 @@ namespace Orchestrator.WebApi
             {
                 var logs = ctx.RequestServices.GetRequiredService<IEnvelopeStreamService>();
                 ctx.Response.Headers.Add("Content-Type", "text/event-stream");
-                //        await foreach (var env in logs.StreamAsync("HostHeartBeat"))
-                await foreach (var status in logs.StreamAsync<InternalStatus>("HostHeartBeat"))
+
+                await foreach (var env in logs.StreamAsync("HostHeartBeat"))
                 {
                     // You can emit the full envelope, or just the payload:
-                    //        var status = JsonSerializer.Deserialize<InternalStatus>(env.Payload.GetRawText())!;
+                    var status = JsonSerializer.Deserialize<InternalStatus>(env.Payload.GetRawText())!;
                     var json = JsonSerializer.Serialize(status);
                     await ctx.Response.WriteAsync($"data: {json}\n\n");
                     await ctx.Response.Body.FlushAsync();
