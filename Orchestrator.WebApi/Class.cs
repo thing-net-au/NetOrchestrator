@@ -41,7 +41,18 @@ namespace Orchestrator.WebApi
             switch (env.Topic.ToLowerInvariant())
             {
                 case "hostheartbeat":
-                    // swallow for now
+                    var hb = env.Payload.Deserialize<WorkerStatus>();
+                    if (hb != null)
+                    {
+                        var internalStatus = new InternalStatus
+                        {
+                            Name = hb.ServiceName,
+                            IsHealthy = hb.Healthy,
+                            Details = hb.Message,
+                            Timestamp = hb.Timestamp.UtcDateTime
+                        };
+                        _envelopes.Push("HostHeartBeat", internalStatus);
+                    }
                     break;
                 case "servicestatus":
                     var status = env.Payload.Deserialize<ServiceStatus>();
