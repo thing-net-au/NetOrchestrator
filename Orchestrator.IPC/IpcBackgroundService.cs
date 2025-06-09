@@ -44,9 +44,16 @@ namespace Orchestrator.IPC
             while (!stoppingToken.IsCancellationRequested)
             {
                 // Wait for a client to connect
-                using var server = new NamedPipeServerStream(PipeName, PipeDirection.InOut,
-                                        NamedPipeServerStream.MaxAllowedServerInstances,
-                                        PipeTransmissionMode.Message, PipeOptions.Asynchronous);
+                var transmissionMode = OperatingSystem.IsWindows()
+                    ? PipeTransmissionMode.Message
+                    : PipeTransmissionMode.Byte;
+
+                using var server = new NamedPipeServerStream(
+                    PipeName,
+                    PipeDirection.InOut,
+                    NamedPipeServerStream.MaxAllowedServerInstances,
+                    transmissionMode,
+                    PipeOptions.Asynchronous);
                 await server.WaitForConnectionAsync(stoppingToken);
 
                 _ = HandleClient(server, stoppingToken);
