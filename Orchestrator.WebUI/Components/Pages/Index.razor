@@ -12,241 +12,335 @@
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 
+<PageTitle>Dashboard - Orchestrator</PageTitle>
+
 <h1>Orchestrator Dashboard</h1>
+<p class="lead">Real-time service orchestration and monitoring</p>
 
 <div class="mb-3">
-    <span>Status stream: </span>
+    <span><strong>Status stream:</strong> </span>
     @if (!statusConnected)
     {
-        <span class="text-danger">🔴 Disconnected</span>
-        <button class="btn btn-sm btn-link" @onclick="ConnectStatus">Reconnect</button>
+        <span class="badge bg-danger">Disconnected</span>
+        <button class="btn btn-sm btn-outline-primary ms-2" @onclick="ConnectStatus">
+            <i class="bi bi-arrow-clockwise"></i> Reconnect
+        </button>
     }
     else
     {
-        <span class="text-success">🟢 Live</span>
-        <button class="btn btn-sm btn-link text-muted" @onclick="DisconnectStatus">Disconnect</button>
+  <span class="badge bg-success">Live</span>
+        <button class="btn btn-sm btn-outline-secondary ms-2" @onclick="DisconnectStatus">
+            <i class="bi bi-x"></i> Disconnect
+ </button>
     }
 </div>
 
 @if (services != null)
 {
-    <div class="mb-3">
-        <span><strong>@RunningServiceCount</strong> / <strong>@TotalServiceCount</strong> services running</span>
-        <span class="ms-3"><strong>@TotalRunningInstances</strong> total instances</span>
+  <div class="row mb-4">
+        <div class="col-md-3">
+        <div class="card text-white bg-primary mb-3">
+          <div class="card-body">
+<h5 class="card-title"><i class="bi bi-collection"></i> Total Services</h5>
+           <p class="display-4">@TotalServiceCount</p>
+         </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+ <div class="card text-white bg-success mb-3">
+           <div class="card-body">
+    <h5 class="card-title"><i class="bi bi-play-circle"></i> Running</h5>
+        <p class="display-4">@RunningServiceCount</p>
+ </div>
+    </div>
+   </div>
+        <div class="col-md-3">
+     <div class="card text-white bg-warning mb-3">
+      <div class="card-body">
+                 <h5 class="card-title"><i class="bi bi-stop-circle"></i> Stopped</h5>
+               <p class="display-4">@(TotalServiceCount - RunningServiceCount)</p>
+            </div>
+            </div>
+     </div>
+        <div class="col-md-3">
+      <div class="card text-white bg-info mb-3">
+<div class="card-body">
+         <h5 class="card-title"><i class="bi bi-layers"></i> Instances</h5>
+        <p class="display-4">@TotalRunningInstances</p>
+           </div>
+            </div>
+  </div>
     </div>
 }
 
 @if (services is null)
 {
-    <p><em>Loading…</em></p>
+    <div class="text-center my-5">
+        <div class="spinner-border text-primary" role="status">
+        <span class="visually-hidden">Loading...</span>
+</div>
+      <p class="mt-2">Loading services...</p>
+    </div>
 }
 else
 {
-    <table class="table table-striped mb-4">
-        <thead>
-            <tr><th>Service</th><th>Instances</th><th>State</th><th>Actions</th></tr>
-        </thead>
-        <tbody>
-            @foreach (var svc in services)
-            {
-                <tr>
-                    <td>@svc.Name</td>
-                    <td>@svc.RunningInstances</td>
-                    <td>@svc.State</td>
-                    <td>
-                        <button class="btn btn-sm btn-success" @onclick="() => Start(svc.Name)">Start</button>
-                        <button class="btn btn-sm btn-danger" @onclick="() => Stop(svc.Name)">Stop</button>
-                        <button class="btn btn-sm btn-info" @onclick="() => ShowLogs(svc.Name)">Logs</button>
-                        <button class="btn btn-sm btn-info" @onclick="() => ShowLogWindow(svc.Name)">Log Window</button>
-                    </td>
-                </tr>
-            }
-            @if(processes == null)
-            {
-                <p>No Processes Registered</p>
-            }
-            else
-            {
-                foreach (var svc in processes)
-                {
-                    <tr>
-                        <td>@svc.Name</td>
-                        <td>@svc.Details</td>
-                        <td>@svc.IsHealthy</td>
-                        <td>
-                            <button class="btn btn-sm btn-success" @onclick="() => Start(svc.Name)">Start</button>
-                            <button class="btn btn-sm btn-danger" @onclick="() => Stop(svc.Name)">Stop</button>
-                            <button class="btn btn-sm btn-info" @onclick="() => ShowLogs(svc.Name)">Logs</button>
-                        </td>
-                    </tr>
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card mb-4">
+                <div class="card-header bg-dark text-white">
+ <h5 class="mb-0"><i class="bi bi-grid"></i> Services Overview</h5>
+      </div>
+              <div class="card-body p-0">
+       <div class="table-responsive">
+     <table class="table table-hover mb-0">
+  <thead class="table-light">
+           <tr>
+            <th>Service</th>
+ <th class="text-center">Instances</th>
+ <th class="text-center">State</th>
+   <th>Actions</th>
+          </tr>
+</thead>
+   <tbody>
+   @foreach (var svc in services.Take(5))
+       {
+           <tr>
+        <td><strong>@svc.Name</strong></td>
+    <td class="text-center">
+        <span class="badge bg-@GetBadgeColor(svc.RunningInstances)">
+               @svc.RunningInstances
+          </span>
+        </td>
+             <td class="text-center">
+    <span class="badge bg-@GetStateBadgeColor(svc.State)">
+  @svc.State
+ </span>
+        </td>
+          <td>
+     <div class="btn-group btn-group-sm">
+        <button class="btn btn-success" @onclick="() => Start(svc.Name)" title="Start">
+          <i class="bi bi-play-fill"></i>
+              </button>
+        <button class="btn btn-danger" @onclick="() => Stop(svc.Name)" title="Stop">
+             <i class="bi bi-stop-fill"></i>
+    </button>
+            <button class="btn btn-info" @onclick="() => ShowLogs(svc.Name)" title="Logs">
+        <i class="bi bi-file-text"></i>
+          </button>
+         </div>
+           </td>
+     </tr>
+          }
+     @if (!services.Any())
+       {
+  <tr>
+      <td colspan="4" class="text-center text-muted">No services configured</td>
+           </tr>
+       }
+             </tbody>
+         </table>
+ </div>
+    </div>
+        @if (services.Count > 5)
+       {
+        <div class="card-footer text-center">
+        <a href="/services" class="btn btn-sm btn-outline-primary">
+       View All @services.Count Services
+           </a>
+        </div>
+        }
+          </div>
+        </div>
+
+        <div class="col-md-4">
+            @if (processes != null && processes.Any())
+   {
+   <div class="card mb-4">
+        <div class="card-header bg-dark text-white">
+    <h5 class="mb-0"><i class="bi bi-cpu"></i> System Components</h5>
+     </div>
+           <div class="list-group list-group-flush">
+ @foreach (var proc in processes)
+          {
+      <div class="list-group-item">
+              <div class="d-flex w-100 justify-content-between align-items-center">
+    <h6 class="mb-1">@proc.Name</h6>
+        <span class="badge @(proc.IsHealthy ? "bg-success" : "bg-danger")">
+             @(proc.IsHealthy ? "Healthy" : "Unhealthy")
+  </span>
+ </div>
+     @if (!string.IsNullOrEmpty(proc.Details))
+   {
+    <p class="mb-1 small text-muted">@proc.Details</p>
                 }
+       </div>
+    }
+                 </div>
+        <div class="card-footer text-center">
+           <a href="/health" class="btn btn-sm btn-outline-primary">
+                 View Health Details
+     </a>
+  </div>
+     </div>
             }
-        </tbody>
-    </table>
+      </div>
+  </div>
+
+    @if (selectedService != null && logConnected)
+    {
+        <div class="card mt-4">
+            <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-terminal"></i> <strong>@selectedService</strong> - Logs</span>
+          <button class="btn btn-sm btn-outline-light" @onclick="DisconnectLog">
+         <i class="bi bi-x"></i> Close
+     </button>
+         </div>
+        <div class="card-body p-0">
+     <pre class="bg-dark text-light p-3 mb-0" style="height:300px; overflow:auto; font-size:0.85rem; font-family: 'Consolas', monospace;">@foreach (var entry in logEntries.TakeLast(100))
+{<div><span class="text-info">[@entry.Timestamp.ToString("HH:mm:ss.fff")]</span> <span class="text-light">@entry.Message</span></div>}</pre>
+      </div>
+        </div>
+    }
 }
 
-<div class="mb-2">
-    <strong>Logs (@(selectedService ?? "none")):</strong>
-    @if (!logConnected)
-    {
-        <span class="text-danger"> 🔴 Disconnected</span>
-    }
-    else
-    {
-        <span class="text-success"> 🟢 Live</span>
-    }
-    @if (logConnected)
-    {
-        <button class="btn btn-sm btn-link text-muted" @onclick="DisconnectLog">Disconnect Logs</button>
-    }
+<div class="mt-4">
+<h5>Quick Actions</h5>
+    <div class="d-flex gap-2">
+      <a href="/services" class="btn btn-primary">
+     <i class="bi bi-grid"></i> Manage Services
+    </a>
+        <a href="/health" class="btn btn-success">
+          <i class="bi bi-heart-pulse"></i> System Health
+        </a>
+        <button class="btn btn-outline-secondary" @onclick="Refresh">
+         <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+    </div>
 </div>
-
-<pre class="border rounded p-2 bg-light" style="height:250px; overflow:auto">
-    @foreach (var entry in logEntries)
-    {
-        <div><small>@entry.Timestamp</small> @entry.Message</div>
-    }
-</pre>
-<div class="mb-2">
-    <strong>Supervisor Logs:</strong>
-    @if (!supervisorLogConnected)
-    {
-        <span class="text-danger"> 🔴 Disconnected</span>
-    }
-    else
-    {
-        <span class="text-success"> 🟢 Live</span>
-    }
-    @if (supervisorLogConnected)
-    {
-        <button class="btn btn-sm btn-link text-muted" @onclick="DisconnectLog">Disconnect Logs</button>
-    }
-    else
-    {
-        <button class="btn btn-sm btn-link text-muted" @onclick="StartSupervisorLogs">Connect to Supervisor</button>
-    }
-</div>
-
-<pre class="border rounded p-2 bg-light" style="height:250px; overflow:auto">
-    @foreach (var entry in logSupervisor)
-    {
-        <div><small>@entry.Timestamp</small> @entry.Message</div>
-    }
-</pre>
 
 @implements IAsyncDisposable
+
 @code {
-    private List<ServiceStatus> services;
-    private List<InternalStatus> processes;
+    private List<ServiceStatus>? services;
+    private List<InternalStatus>? processes;
     private bool statusConnected;
     private bool logConnected;
-    private bool supervisorLogConnected;
-    private string selectedService;
+    private string? selectedService;
     private List<(DateTime Timestamp, string Message)> logEntries = new();
-    private List<(DateTime Timestamp, string Message)> logSupervisor = new();
 
-    private int TotalServiceCount => services?.Count ?? 0;
+  private int TotalServiceCount => services?.Count ?? 0;
     private int RunningServiceCount => services?.Count(s => s.State == State.Running) ?? 0;
     private int TotalRunningInstances => services?.Sum(s => s.RunningInstances) ?? 0;
 
     private DotNetObjectReference<Index>? statusRef;
     private DotNetObjectReference<Index>? logRef;
-    private DotNetObjectReference<Index>? supervisorLogsRef;
 
     private bool _interactive;
 
-protected override async Task OnAfterRenderAsync(bool firstRender)
-{
-    if (firstRender)
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        _interactive = true;
-        await StartSupervisorLogs();
-        await ConnectStatus();
+        if (firstRender)
+   {
+            _interactive = true;
+   await ConnectStatus();
+   }
     }
-}
 
     protected override async Task OnInitializedAsync()
-    {
+{
         await Refresh();
     }
 
-    private async Task ConnectStatus()
+    private string GetBadgeColor(int count) => count switch
     {
+        0 => "secondary",
+    1 => "primary",
+        _ => "success"
+    };
+
+  private string GetStateBadgeColor(State state) => state switch
+    {
+    State.Running => "success",
+        State.Stopped => "warning",
+        State.Failed => "danger",
+        State.Suspended => "info",
+        _ => "secondary"
+    };
+
+    private async Task ConnectStatus()
+  {
         var baseUri = new Uri(Nav.BaseUri);
         var apiPort = OrchestratorConfig.Current.Web.ApiPort;
         var apiOrigin = new UriBuilder(baseUri.Scheme, baseUri.Host, apiPort).Uri;
 
         statusRef?.Dispose();
-            statusRef = DotNetObjectReference.Create(this);
+        statusRef = DotNetObjectReference.Create(this);
 
         var statusUrl = new Uri(apiOrigin, "/api/services/stream").ToString();
 
-            await JS.InvokeVoidAsync("logStream.status.open", statusRef, statusUrl);
-            statusConnected = true;
-            StateHasChanged();
-        
+        await JS.InvokeVoidAsync("logStream.status.open", statusRef, statusUrl);
+        statusConnected = true;
+        StateHasChanged();
     }
 
     private async Task DisconnectStatus()
     {
         await JS.InvokeVoidAsync("logStream.status.close");
         statusConnected = false;
-        StateHasChanged();
+    StateHasChanged();
     }
 
     private async Task Refresh()
     {
+      try
+      {
         var client = ClientFactory.CreateClient("OrcApi");
-        services = await client.GetFromJsonAsync<List<ServiceStatus>>("api/services");
-        processes = await client.GetFromJsonAsync<List<InternalStatus>>("api/services/internal");
-        StateHasChanged();
+            services = await client.GetFromJsonAsync<List<ServiceStatus>>("api/services");
+       processes = await client.GetFromJsonAsync<List<InternalStatus>>("api/services/internal");
+      StateHasChanged();
+        }
+     catch (Exception ex)
+        {
+  Console.Error.WriteLine($"Failed to refresh: {ex.Message}");
+        }
     }
 
     private async Task Start(string name)
     {
-        var client = ClientFactory.CreateClient("OrcApi");
-        await client.PostAsync($"api/services/{name}/start", null);
-        await Refresh();
-    }
-
-    private async Task StartSupervisorLogs()
-    {
-        var baseUri = new Uri(Nav.BaseUri);
-        var apiPort = OrchestratorConfig.Current.Web.ApiPort;
-        var apiOrigin = new UriBuilder(baseUri.Scheme, baseUri.Host, apiPort).Uri;
-
-        var logsUrl = new Uri(apiOrigin, "/api/services/_supervisor/logs/stream").ToString();
-        logSupervisor.Clear();
-        supervisorLogConnected = false;
-        StateHasChanged();
-
-        supervisorLogsRef?.Dispose();
-        supervisorLogsRef = DotNetObjectReference.Create(this);
-
-        await JS.InvokeVoidAsync("logStream.supervisorLog.open", supervisorLogsRef, logsUrl);
-        supervisorLogConnected = true;
-    }
-
-    private async Task StopSupervisorLogs()
-    {
-        await JS.InvokeVoidAsync("logStream.supervisorLog.close");
-        supervisorLogConnected = false;
-        StateHasChanged();
+        try
+        {
+    var client = ClientFactory.CreateClient("OrcApi");
+            await client.PostAsync($"api/services/{name}/start", null);
+   await Task.Delay(500);
+            await Refresh();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Failed to start service: {ex.Message}");
+   }
     }
 
     private async Task Stop(string name)
     {
-        var client = ClientFactory.CreateClient("OrcApi");
-        await client.PostAsync($"api/services/{name}/stop", null);
-        await Refresh();
+        try
+        {
+         var client = ClientFactory.CreateClient("OrcApi");
+       await client.PostAsync($"api/services/{name}/stop", null);
+await Task.Delay(500);
+            await Refresh();
+ }
+ catch (Exception ex)
+        {
+      Console.Error.WriteLine($"Failed to stop service: {ex.Message}");
+        }
     }
 
-    private async Task ShowLogs(string name)
+  private async Task ShowLogs(string name)
     {
         selectedService = name;
         var baseUri = new Uri(Nav.BaseUri);
         var apiPort = OrchestratorConfig.Current.Web.ApiPort;
-        var apiOrigin = new UriBuilder(baseUri.Scheme, baseUri.Host, apiPort).Uri;
+      var apiOrigin = new UriBuilder(baseUri.Scheme, baseUri.Host, apiPort).Uri;
 
         var logsUrl = new Uri(apiOrigin, $"/api/services/{name}/logs/stream").ToString();
         logEntries.Clear();
@@ -256,125 +350,100 @@ protected override async Task OnAfterRenderAsync(bool firstRender)
         logRef = DotNetObjectReference.Create(this);
 
         await JS.InvokeVoidAsync("logStream.serviceLog.open", logRef, logsUrl);
-        logConnected = true;
-    }
-    private async Task ShowLogWindow(string name)
-    {
-        var baseUri = new Uri(Nav.BaseUri);
-        var apiPort = OrchestratorConfig.Current.Web.ApiPort;
-        var apiOrigin = new UriBuilder(baseUri.Scheme, baseUri.Host, apiPort).Uri;
-        var logsUrl = new Uri(apiOrigin, $"/api/services/{name}/logs/stream").ToString();
-
-        // instead of opening an SSE inside the same page, just pop open a window:
-        await JS.InvokeVoidAsync("logStream.popup", logsUrl);
+ logConnected = true;
+        StateHasChanged();
     }
 
     private async Task DisconnectLog()
     {
         await JS.InvokeVoidAsync("logStream.serviceLog.close");
         logConnected = false;
-        StateHasChanged();
+        selectedService = null;
+   StateHasChanged();
     }
 
     [JSInvokable]
     public void StatusOpened()
     {
-        statusConnected = true;
+    statusConnected = true;
         StateHasChanged();
     }
 
     [JSInvokable]
     public void ReceiveStatus(string json)
     {
-        var updated = JsonSerializer.Deserialize<ServiceStatus>(json);
-        if (updated != null && services != null)
+        try
         {
-            var svc = services.FirstOrDefault(s => s.Name == updated.Name);
-            if (svc != null)
+       var updated = JsonSerializer.Deserialize<ServiceStatus>(json);
+ if (updated != null && services != null)
             {
-                svc.RunningInstances = updated.RunningInstances;
-                svc.State = updated.State;
-                StateHasChanged();
+         var svc = services.FirstOrDefault(s => s.Name == updated.Name);
+         if (svc != null)
+    {
+          svc.RunningInstances = updated.RunningInstances;
+        svc.State = updated.State;
+          StateHasChanged();
+                }
             }
         }
-    }
-
-  [JSInvokable]
-public void ReceiveSupervisorLogChunk(string chunk)
-{
-    try
-    {
-        int MaxLogEntries = 50;
-        var message = JsonSerializer.Deserialize<ConsoleLogMessage>(chunk);
-        if (message is not null)
+      catch (Exception ex)
         {
-              if (logSupervisor.Count >= MaxLogEntries)
-        logSupervisor.RemoveAt(0);
-         logSupervisor.Add((message.Timestamp, message.Details));
-            supervisorLogConnected = true;
-            StateHasChanged();
-        }
+   Console.Error.WriteLine($"Failed to parse status: {ex.Message}");
+   }
     }
-    catch (JsonException ex)
-    {
-        Console.Error.WriteLine($"Failed to parse supervisor log chunk: {ex.Message}");
-    }
-}
 
     [JSInvokable]
     public void ReceiveLogChunk(string chunk)
     {
-        try
+   try
         {
-            int MaxLogEntries = 500;
+            const int MaxLogEntries = 500;
             var message = JsonSerializer.Deserialize<ConsoleLogMessage>(chunk);
-            if (message is not null)
-            {
+      if (message != null)
+        {
                 if (logEntries.Count >= MaxLogEntries)
-                    logEntries.RemoveAt(0);
-                logEntries.Add((message.Timestamp, message.Details));
+         logEntries.RemoveAt(0);
+         logEntries.Add((message.Timestamp, message.Details ?? ""));
                 logConnected = true;
-                StateHasChanged();
-            }
-        }
+            StateHasChanged();
+      }
+    }
         catch (JsonException ex)
         {
-            Console.Error.WriteLine($"Failed to parse supervisor log chunk: {ex.Message}");
-        }
+      Console.Error.WriteLine($"Failed to parse log chunk: {ex.Message}");
+   }
     }
 
-    [JSInvokable]
+  [JSInvokable]
     public void LogError(string error)
     {
-        Task.Delay(2000).ContinueWith(async _ =>
+        logConnected = false;
+        StateHasChanged();
+      Task.Delay(2000).ContinueWith(async _ =>
         {
-            if (!string.IsNullOrEmpty(selectedService))
-                await ShowLogs(selectedService);
+ if (!string.IsNullOrEmpty(selectedService))
+await ShowLogs(selectedService);
         });
     }
 
-    [JSInvokable]
+  [JSInvokable]
     public void StatusError(string error)
-    {
+  {
         statusConnected = false;
         StateHasChanged();
         Task.Delay(2000).ContinueWith(async _ => await ConnectStatus());
     }
 
-    public async ValueTask DisposeAsync()
+public async ValueTask DisposeAsync()
     {
-        // only call JS if we've already rendered on the client
         if (_interactive)
-        {
-            await JS.InvokeVoidAsync("logStream.serviceLog.close");
-            await JS.InvokeVoidAsync("logStream.supervisorLog.close");
-            await JS.InvokeVoidAsync("logStream.status.close");
+      {
+      await JS.InvokeVoidAsync("logStream.serviceLog.close");
+   await JS.InvokeVoidAsync("logStream.status.close");
         }
 
         logRef?.Dispose();
-        statusRef?.Dispose();
-        supervisorLogsRef?.Dispose();
+statusRef?.Dispose();
     }
-   
 }
 

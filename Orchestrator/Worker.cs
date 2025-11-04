@@ -7,7 +7,6 @@ using Orchestrator.Core.Extensions;
 public class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
-  //  private readonly IEnvelopeStreamService _envelopeService;
     private readonly TcpJsonClient<Envelope> _client;
     private readonly string[] _serviceNames;
     private readonly int _pid;
@@ -15,13 +14,11 @@ public class Worker : BackgroundService
 
     public Worker(
         ILogger<Worker> logger,
-   //     IEnvelopeStreamService envelopeService,
         TcpJsonClient<Envelope> client,
         IConfigurationLoader cfg
     )
     {
         _logger = logger;
-  //      _envelopeService = envelopeService;
         _client = client;
         _serviceNames = cfg.GetConfiguredServices().ToArray();
         _pid = Environment.ProcessId;
@@ -39,81 +36,33 @@ public class Worker : BackgroundService
     {
         _logger.LogInformation("Worker tick loop entering");
 
-        // kick off a pump per service for both kinds of streams
-        var pumps = new List<Task>();
- //       foreach (var svc in _serviceNames)
- //       {
- //           pumps.Add(PumpPlainLogLines(svc, stoppingToken));
- //           pumps.Add(PumpProcessEnvelopes(svc, stoppingToken));
- //       }
-
-        // also your heartbeat/tick loop
-        pumps.Add(HeartbeatLoop(stoppingToken));
+        // kick off heartbeat loop
+        var pumps = new List<Task>
+        {
+            HeartbeatLoop(stoppingToken)
+        };
 
         // when any of them ends (i.e. cancellation), we're done
         await Task.WhenAny(Task.WhenAll(pumps), Task.Delay(Timeout.Infinite, stoppingToken));
     }
 
- /*   private async Task PumpPlainLogLines(string svc, CancellationToken ct)
-    {
-        await foreach (var ws in _envelopeService.StreamAsync<WorkerStatus>(svc))
-        {
-            // either re-wrap it in an envelope:
-            var env = new Envelope(svc, ws);
-            await _client.SendAsync(env);
-
-        }
-    }*/
- /*
-    private async Task PumpProcessEnvelopes(string svc, CancellationToken ct)
-    {
-        // this is your “raw JSON” stream:
-        while (!ct.IsCancellationRequested)
-        {
-            try
-            {
-                await foreach (var json in _envelopeService.StreamRawAsync(svc).WithCancellation(ct))
-                {
-                    Envelope? env;
-                    env = JsonSerializer.Deserialize<Envelope>(json);
-                    if (env is null) continue;
-                    await _client.SendAsync(env);
-                }
-                await Task.Delay(TimeSpan.FromSeconds(5), ct);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                _logger.LogInformation("PumpProcessEnvelopes for {Svc} cancelled", svc);
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Error in PumpProcessEnvelopes for {Svc}, retrying", svc);
-                // back-off a bit before retry
-                await Task.Delay(TimeSpan.FromSeconds(5), ct);
-            }
-
-        }
-    }
- */
-
-
     private async Task HeartbeatLoop(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
-   //         var e = _envelopeService;
             var now = DateTimeOffset.UtcNow;
-            var env = new Envelope("HostHeartBeat", new InternalStatus
+            var env = new Envelope("HostHeartBeat", new WorkerStatus
             {
                 ServiceName = "HostHeartbeat",
                 ProcessId = _pid,
-                Timestamp = now.UtcDateTime,
+                Timestamp = now,
+                Healthy = true,
                 Message = JsonSerializer.Serialize(new
                 {
                     Timestamp = now,
                     Uptime = (now - _start).TotalSeconds
-                })
+                }),
+                UptimeSeconds = (now - _start).TotalSeconds
             });
             await _client.SendAsync(env);
             await Task.Delay(TimeSpan.FromSeconds(30), ct);

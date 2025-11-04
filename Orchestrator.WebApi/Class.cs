@@ -18,9 +18,9 @@ namespace Orchestrator.WebApi
         private readonly ILogger<StartupJsonClients> _logger;
         private readonly IOptions<IpcSettings> _opts;
 
-        private TcpJsonClient<Envelope> _client;
+        private TcpJsonClient<Envelope> _client = null!;
         private const int _reconnectDelayMs = 10_000;
-        private CancellationTokenSource _cts;
+        private CancellationTokenSource _cts = null!;
 
         public StartupJsonClients(
             IEnvelopeStreamService envelopes,

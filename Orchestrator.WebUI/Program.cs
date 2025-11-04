@@ -74,7 +74,7 @@ namespace Orchestrator.WebUI
                 OnPrepareResponse = ctx =>
                 {
                     var path = ctx.File.PhysicalPath;
-                    if (path.Contains(Path.Combine("_framework", "")))
+                    if (path != null && path.Contains(Path.Combine("_framework", "")))
                     {
                         ctx.Context.Response.Headers["Cache-Control"] =
                             "no-cache, no-store, must-revalidate";

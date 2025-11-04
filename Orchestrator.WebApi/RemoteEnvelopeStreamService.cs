@@ -44,17 +44,13 @@ namespace Orchestrator.WebApi
         /// <summary>
         /// Stream raw JSON envelopes for a given topic.
         /// </summary>
-        public IAsyncEnumerable<string> StreamRawAsync(
-            string topic,
-            [EnumeratorCancellation] CancellationToken ct = default)
+        public IAsyncEnumerable<string> StreamRawAsync(string topic)
             => _broker.StreamRawAsync(topic);
 
         /// <summary>
         /// Stream typed payloads by deserializing envelope.Payload.
         /// </summary>
-        public async IAsyncEnumerable<T> StreamRawAsync<T>(
-            string topic,
-            [EnumeratorCancellation] CancellationToken ct = default)
+        public async IAsyncEnumerable<T> StreamRawAsync<T>(string topic)
         {
             await foreach (var raw in _broker.StreamRawAsync(topic))
             {

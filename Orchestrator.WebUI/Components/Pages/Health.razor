@@ -1,0 +1,96 @@
+@rendermode InteractiveServer
+@page "/health"
+@using System.Net.Http
+@using System.Text.Json
+@using Microsoft.AspNetCore.Components
+@using Orchestrator.Core
+@using Orchestrator.Core.Models
+
+@inject IHttpClientFactory ClientFactory
+
+<PageTitle>System Health - Orchestrator</PageTitle>
+
+<h1>System Health</h1>
+
+<div class="row">
+    <div class="col-md-12">
+        <button class="btn btn-primary mb-3" @onclick="Refresh">
+            <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+    </div>
+</div>
+
+@if (internalStatuses == null)
+{
+    <div class="text-center my-5">
+        <div class="spinner-border" role="status">
+   <span class="visually-hidden">Loading...</span>
+        </div>
+ <p class="mt-2">Loading health data...</p>
+    </div>
+}
+else
+{
+    <div class="row">
+  @foreach (var status in internalStatuses)
+        {
+         <div class="col-md-4 mb-3">
+   <div class="card @(status.IsHealthy ? "border-success" : "border-danger")">
+  <div class="card-header @(status.IsHealthy ? "bg-success" : "bg-danger") text-white">
+          <h5 class="mb-0">
+           <i class="bi bi-@(status.IsHealthy ? "check-circle" : "x-circle")"></i>
+      @status.Name
+         </h5>
+    </div>
+     <div class="card-body">
+             <p class="card-text">
+       <strong>Status:</strong> 
+        <span class="badge @(status.IsHealthy ? "bg-success" : "bg-danger")">
+   @(status.IsHealthy ? "Healthy" : "Unhealthy")
+     </span>
+       </p>
+            @if (!string.IsNullOrEmpty(status.Details))
+      {
+        <p class="card-text"><strong>Details:</strong> @status.Details</p>
+ }
+          <p class="card-text">
+     <small class="text-muted">
+         Last updated: @status.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")
+              </small>
+            </p>
+          </div>
+         </div>
+            </div>
+     }
+    </div>
+
+    @if (!internalStatuses.Any())
+    {
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle"></i> No internal health components registered.
+        </div>
+    }
+}
+
+@code {
+    private List<InternalStatus>? internalStatuses;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Refresh();
+    }
+
+    private async Task Refresh()
+  {
+        try
+{
+       var client = ClientFactory.CreateClient("OrcApi");
+          internalStatuses = await client.GetFromJsonAsync<List<InternalStatus>>("api/services/internal");
+    StateHasChanged();
+        }
+catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Failed to refresh health data: {ex.Message}");
+        }
+    }
+}

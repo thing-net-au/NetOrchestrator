@@ -97,7 +97,7 @@ namespace Orchestrator.WebApi
             {
                 var name = (string)ctx.Request.RouteValues["name"]!;
                 var logs = ctx.RequestServices.GetRequiredService<IConsoleLogStreamService>();
-                ctx.Response.Headers.Add("Content-Type", "text/event-stream");
+                ctx.Response.Headers[HeaderNames.ContentType] = "text/event-stream";
 
                 await foreach (var env in logs.StreamAsync(name))
                 {
@@ -115,7 +115,7 @@ namespace Orchestrator.WebApi
                 var stream = ctx.RequestServices.GetRequiredService<IEnvelopeStreamService>();
                 var logger = ctx.RequestServices.GetRequiredService<ILoggerFactory>()
                                  .CreateLogger("ServiceStatusStream");
-                ctx.Response.Headers.Add("Content-Type", "text/event-stream");
+                ctx.Response.Headers[HeaderNames.ContentType] = "text/event-stream";
 
                 await foreach (var status in stream.StreamAsync<ServiceStatus>("ServiceStatus", logger))
                 {
@@ -130,7 +130,7 @@ namespace Orchestrator.WebApi
                 var logs = ctx.RequestServices.GetRequiredService<IEnvelopeStreamService>();
                 var logger = ctx.RequestServices.GetRequiredService<ILoggerFactory>()
                                  .CreateLogger("InternalStatusStream");
-                ctx.Response.Headers.Add("Content-Type", "text/event-stream");
+                ctx.Response.Headers[HeaderNames.ContentType] = "text/event-stream";
 
                 await foreach (var status in logs.StreamAsync<WorkerStatus>("HostHeartBeat"))
                 {

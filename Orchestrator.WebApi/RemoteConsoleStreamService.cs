@@ -14,40 +14,32 @@ namespace Orchestrator.WebApi
     /// </summary>
     public class ConsoleLogStreamService : IConsoleLogStreamService
     {
-        private readonly TcpJsonClient<ConsoleLogMessage> _client;
         private readonly LogStreamService _broker;  // in-memory broker for SSE
 
-        public ConsoleLogStreamService(
-            LogStreamService broker)
+        public ConsoleLogStreamService(LogStreamService broker)
         {
             _broker = broker ?? throw new ArgumentNullException(nameof(broker));
-
-            // forward all incoming Consoles into in-memory streams
         }
 
         /// <summary>
-        /// Not used for outgoing in WebAPI; read-only service.
+        /// Push a message onto a given topic.
         /// </summary>
         public void Push<T>(string topic, T payload)
         {
             var json = JsonSerializer.Serialize(payload);
             _broker.Push(topic, json);
-            //throw new NotSupportedException("Read-only broker");
         }
+
         /// <summary>
-        /// Stream raw JSON Consoles for a given topic.
+        /// Stream raw JSON messages for a given topic.
         /// </summary>
-        public IAsyncEnumerable<string> StreamRawAsync(
-            string topic,
-            [EnumeratorCancellation] CancellationToken ct = default)
+        public IAsyncEnumerable<string> StreamRawAsync(string topic)
             => _broker.StreamRawAsync(topic);
 
- 
         /// <summary>
         /// Full Console stream for generic consumers.
         /// </summary>
-        async IAsyncEnumerable<ConsoleLogMessage> IConsoleLogStreamService.StreamAsync(
-            string topic)
+        async IAsyncEnumerable<ConsoleLogMessage> IConsoleLogStreamService.StreamAsync(string topic)
         {
             await foreach (var raw in _broker.StreamRawAsync(topic))
             {

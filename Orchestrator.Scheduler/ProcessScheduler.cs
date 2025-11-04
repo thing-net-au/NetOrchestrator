@@ -21,17 +21,15 @@ namespace Orchestrator.Scheduler
     {
         private readonly IProcessSupervisor _supervisor;
         private readonly IEnvelopeStreamService _envelopes;
-        private DateTime _lastRun;
-        private readonly IEnumerable<IInternalHealth> _healthProviders;
+        private DateTime _lastRun = DateTime.UtcNow;
 
         public InternalStatus GetStatus() => new InternalStatus
         {
             Name = nameof(ProcessScheduler),
-            IsHealthy = true,  // you could check if _lastRun is within twice the interval
-            Details = $"Last run at {_lastRun:O}"
+            IsHealthy = true,
+            Details = $"Last run at {_lastRun:O}",
+            Timestamp = DateTime.UtcNow
         };
-
-
 
         public ProcessScheduler(
             IProcessSupervisor supervisor,
@@ -47,6 +45,7 @@ namespace Orchestrator.Scheduler
 
             while (!stoppingToken.IsCancellationRequested)
             {
+                _lastRun = DateTime.UtcNow;
 
                 var statuses = (await _supervisor.ListStatusAsync()).ToList();
                 foreach (var status in statuses)
