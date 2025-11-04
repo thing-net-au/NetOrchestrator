@@ -50,6 +50,12 @@ namespace Orchestrator.WebApi
             builder.Services.AddSingleton<IConsoleLogStreamService, ConsoleLogStreamService>();
             builder.Services.AddSingleton<IProcessSupervisor, ProcessSupervisor>();
 
+            // Register P2P services (read-only access from API)
+            builder.Services.AddSingleton<Orchestrator.Core.Interfaces.IPeerDiscoveryService>(sp =>
+                 new Orchestrator.Peer.MulticastDiscoveryService(
+             sp.GetRequiredService<ILogger<Orchestrator.Peer.MulticastDiscoveryService>>()));
+             builder.Services.AddSingleton<Orchestrator.Core.Interfaces.IPeerStateManager, Orchestrator.Peer.PeerStateManager>();
+
             builder.Services.AddControllers();
 
             // 4) our “startup” hosted service that spins up two TcpJsonClient<T>

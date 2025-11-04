@@ -24,9 +24,8 @@
   <ItemGroup>
     <ProjectReference Include="..\Orchestrator.Core\Orchestrator.Core.csproj" />
     <ProjectReference Include="..\Orchestrator.IPC\Orchestrator.IPC.csproj" />
+    <ProjectReference Include="..\Orchestrator.Peer\Orchestrator.Peer.csproj" />
     <ProjectReference Include="..\Orchestrator.Scheduler\Orchestrator.Scheduler.csproj" />
     <ProjectReference Include="..\Orchestrator.Supervisor\Orchestrator.Supervisor.csproj" />
-    <ProjectReference Include="..\Orchestrator.WebApi\Orchestrator.WebApi.csproj" />
-    <ProjectReference Include="..\Orchestrator.WebUI\Orchestrator.WebUI.csproj" />
   </ItemGroup>
 </Project>

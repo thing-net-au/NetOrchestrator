@@ -48,6 +48,7 @@ namespace Orchestrator.Core
         public GlobalConfig Global { get; set; }
         public SchedulingConfig Scheduling { get; set; }
         public WebConfig Web { get; set; }
+        public PeerConfig Peer { get; set; } = new PeerConfig();
 
         public IEnumerable<string> GetConfiguredServices()
         {

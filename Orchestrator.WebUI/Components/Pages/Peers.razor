@@ -1,0 +1,231 @@
+@rendermode InteractiveServer
+@page "/peers"
+@using System.Net.Http
+@using System.Text.Json
+@using Orchestrator.Core
+@using Orchestrator.Core.Models
+
+@inject IHttpClientFactory ClientFactory
+
+<PageTitle>Peer Network - Orchestrator</PageTitle>
+
+<h1>Peer-to-Peer Network</h1>
+<p class="lead">Discover and manage peer Orchestrator instances</p>
+
+<div class="row mb-3">
+    <div class="col-md-12">
+  <button class="btn btn-primary" @onclick="Refresh">
+  <i class="bi bi-arrow-clockwise"></i> Refresh
+  </button>
+    </div>
+</div>
+
+@if (localPeer != null)
+{
+<div class="card mb-4 border-primary">
+     <div class="card-header bg-primary text-white">
+      <h5 class="mb-0"><i class="bi bi-pc-display"></i> Local Peer</h5>
+    </div>
+        <div class="card-body">
+ <div class="row">
+     <div class="col-md-6">
+      <p><strong>Peer ID:</strong> <code>@localPeer.PeerId</code></p>
+  <p><strong>Hostname:</strong> @localPeer.Hostname</p>
+  <p><strong>IP Address:</strong> @localPeer.IpAddress</p>
+  </div>
+     <div class="col-md-6">
+     <p><strong>API Port:</strong> @localPeer.ApiPort</p>
+  <p><strong>IPC Port:</strong> @localPeer.IpcPort</p>
+  <p><strong>Services:</strong> @localPeer.ServiceCount</p>
+  </div>
+  </div>
+  @if (localPeer.Metadata.Any())
+     {
+       <hr />
+   <h6>Metadata:</h6>
+         <div class="d-flex gap-2 flex-wrap">
+       @foreach (var kvp in localPeer.Metadata)
+    {
+    <span class="badge bg-secondary">@kvp.Key: @kvp.Value</span>
+     }
+ </div>
+     }
+ </div>
+ </div>
+}
+
+<div class="card mb-4">
+<div class="card-header bg-dark text-white">
+  <h5 class="mb-0"><i class="bi bi-diagram-3"></i> Network Peers (@PeerCount)</h5>
+    </div>
+    <div class="card-body">
+    @if (peers == null)
+        {
+      <div class="text-center">
+      <div class="spinner-border" role="status">
+     <span class="visually-hidden">Loading...</span>
+    </div>
+      </div>
+        }
+else if (!peers.Any())
+{
+  <div class="alert alert-info">
+   <i class="bi bi-info-circle"></i> No peers discovered yet. Make sure P2P networking is enabled and other Orchestrator instances are running on the network.
+   </div>
+  }
+     else
+ {
+     <div class="row">
+    @foreach (var peer in peers)
+       {
+         <div class="col-md-6 col-lg-4 mb-3">
+  <div class="card border-@GetStatusColor(peer.Status)">
+  <div class="card-header bg-@GetStatusColor(peer.Status) bg-opacity-10">
+     <h6 class="mb-0">
+     <i class="bi bi-@GetStatusIcon(peer.Status)"></i>
+ @peer.Hostname
+      </h6>
+        </div>
+      <div class="card-body">
+   <p class="small mb-1"><strong>Peer ID:</strong> <code class="small">@peer.PeerId.Substring(0, 8)...</code></p>
+ <p class="small mb-1"><strong>IP:</strong> @peer.IpAddress</p>
+ <p class="small mb-1"><strong>API Port:</strong> @peer.ApiPort</p>
+   <p class="small mb-1"><strong>Services:</strong> @peer.ServiceCount</p>
+  <p class="small mb-1"><strong>Instances:</strong> @peer.TotalInstances</p>
+     <p class="small mb-1"><strong>Last Seen:</strong> @GetTimeSince(peer.LastSeen)</p>
+  <p class="small mb-0"><strong>Status:</strong> <span class="badge bg-@GetStatusColor(peer.Status)">@peer.Status</span></p>
+       
+      @if (peer.Metadata.Any())
+ {
+       <hr class="my-2" />
+       <div class="d-flex gap-1 flex-wrap">
+   @foreach (var kvp in peer.Metadata)
+    {
+ <span class="badge bg-light text-dark small">@kvp.Key: @kvp.Value</span>
+          }
+      </div>
+  }
+    </div>
+   <div class="card-footer">
+  <a href="http://@peer.IpAddress:@peer.ApiPort/swagger" target="_blank" class="btn btn-sm btn-outline-primary">
+    <i class="bi bi-box-arrow-up-right"></i> API
+ </a>
+    <a href="http://@peer.IpAddress:@(OrchestratorConfig.Current.Web.UiPort)" target="_blank" class="btn btn-sm btn-outline-info">
+       <i class="bi bi-window"></i> UI
+  </a>
+     </div>
+ </div>
+ </div>
+    }
+     </div>
+ }
+ </div>
+</div>
+
+@if (clusterServices != null && clusterServices.Any())
+{
+    <div class="card">
+<div class="card-header bg-info text-white">
+  <h5 class="mb-0"><i class="bi bi-globe"></i> Cluster-Wide Services</h5>
+  </div>
+  <div class="card-body">
+     <div class="table-responsive">
+    <table class="table table-sm table-hover">
+      <thead>
+     <tr>
+  <th>Service</th>
+  <th class="text-center">Total Instances</th>
+  <th class="text-center">Peers Running</th>
+   <th>State</th>
+     </tr>
+       </thead>
+      <tbody>
+        @foreach (var group in clusterServices.GroupBy(s => s.Name))
+  {
+       var totalInstances = group.Sum(s => s.RunningInstances);
+  var peersRunning = group.Count(s => s.RunningInstances > 0);
+   var primaryState = group.First().State;
+    
+     <tr>
+   <td><strong>@group.Key</strong></td>
+     <td class="text-center">@totalInstances</td>
+ <td class="text-center">@peersRunning</td>
+   <td><span class="badge bg-@GetStateBadgeColor(primaryState)">@primaryState</span></td>
+      </tr>
+ }
+     </tbody>
+     </table>
+      </div>
+  </div>
+  </div>
+}
+
+@code {
+    private PeerInfo? localPeer;
+    private List<PeerInfo>? peers;
+    private List<ServiceStatus>? clusterServices;
+
+    private int PeerCount => peers?.Count ?? 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+ await Refresh();
+    }
+
+    private async Task Refresh()
+    {
+   try
+  {
+       var client = ClientFactory.CreateClient("OrcApi");
+ 
+     localPeer = await client.GetFromJsonAsync<PeerInfo>("api/peers/local");
+  peers = await client.GetFromJsonAsync<List<PeerInfo>>("api/peers");
+  clusterServices = await client.GetFromJsonAsync<List<ServiceStatus>>("api/peers/cluster/services");
+      
+      StateHasChanged();
+   }
+        catch (Exception ex)
+ {
+        Console.Error.WriteLine($"Failed to refresh peers: {ex.Message}");
+ }
+    }
+
+    private string GetStatusColor(PeerStatus status) => status switch
+    {
+  PeerStatus.Online => "success",
+  PeerStatus.Offline => "danger",
+  PeerStatus.Degraded => "warning",
+ _ => "secondary"
+  };
+
+ private string GetStatusIcon(PeerStatus status) => status switch
+    {
+ PeerStatus.Online => "circle-fill text-success",
+  PeerStatus.Offline => "circle text-danger",
+  PeerStatus.Degraded => "exclamation-circle text-warning",
+ _ => "question-circle"
+    };
+
+    private string GetStateBadgeColor(State state) => state switch
+    {
+ State.Running => "success",
+  State.Stopped => "warning",
+        State.Failed => "danger",
+  State.Suspended => "info",
+        _ => "secondary"
+    };
+
+    private string GetTimeSince(DateTimeOffset time)
+    {
+ var elapsed = DateTimeOffset.UtcNow - time;
+  
+        if (elapsed.TotalSeconds < 60)
+  return $"{(int)elapsed.TotalSeconds}s ago";
+  if (elapsed.TotalMinutes < 60)
+   return $"{(int)elapsed.TotalMinutes}m ago";
+ if (elapsed.TotalHours < 24)
+ return $"{(int)elapsed.TotalHours}h ago";
+        
+ return $"{(int)elapsed.TotalDays}d ago";
+    }
+}

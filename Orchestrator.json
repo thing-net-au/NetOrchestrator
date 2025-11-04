@@ -34,6 +34,23 @@
   "Ipc": {
     "Host": "127.0.0.1",
     "LogPort": 6000,
-    "StatusPort": 6001
+    "StatusPort": 6001,
+    "HistorySize": 100
+  },
+  "Peer": {
+    "Enabled": true,
+    "MulticastGroup": "239.255.42.99",
+    "MulticastPort": 5353,
+    "HeartbeatInterval": 5000,
+    "PeerTimeout": 15000,
+    "MaxPeers": 100,
+    "AutoSync": true,
+    "SyncInterval": 10000,
+    "EnableClusterCommands": true,
+    "BindInterface": "",
+    "Metadata": {
+      "region": "us-west",
+      "datacenter": "dc1"
+    }
   }
 }

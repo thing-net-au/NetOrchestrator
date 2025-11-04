@@ -79,6 +79,12 @@ namespace Orchestrator
                     services.AddHostedService<ProcessScheduler>();
 
 
+                    // Register P2P services
+                    services.AddSingleton<Orchestrator.Core.Interfaces.IPeerDiscoveryService, Orchestrator.Peer.MulticastDiscoveryService>();
+                    services.AddSingleton<Orchestrator.Core.Interfaces.IPeerStateManager, Orchestrator.Peer.PeerStateManager>();
+                    services.AddHostedService<Orchestrator.Peer.PeerNetworkService>();
+                    services.AddSingleton<IInternalHealth>(sp => sp.GetRequiredService<Orchestrator.Peer.PeerNetworkService>());
+
                     services.AddSingleton<TcpJsonClient<Envelope>>(sp =>
                     {
                         var opts = sp.GetRequiredService<IOptions<IpcSettings>>().Value;
