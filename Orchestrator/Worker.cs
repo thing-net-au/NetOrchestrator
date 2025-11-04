@@ -104,7 +104,7 @@ public class Worker : BackgroundService
         {
    //         var e = _envelopeService;
             var now = DateTimeOffset.UtcNow;
-            var env = new Envelope("HostHeartBeat", new WorkerStatus
+            var env = new Envelope("HostHeartBeat", new InternalStatus
             {
                 ServiceName = "HostHeartbeat",
                 ProcessId = _pid,
