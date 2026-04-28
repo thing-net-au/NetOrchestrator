@@ -1,7 +1,10 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 using Orchestrator.Core.Interfaces;
 using Orchestrator.Core.Models;
-using Orchestrator.IPC;
 
 namespace Orchestrator.WebApi.Controllers
 {
@@ -10,24 +13,23 @@ namespace Orchestrator.WebApi.Controllers
     public class ServicesController : ControllerBase
     {
         private readonly IProcessSupervisor _supervisor;
+        private readonly IIpcServer _ipc;
 
-        public ServicesController(IProcessSupervisor supervisor)
-            => _supervisor = supervisor;
+        public ServicesController(IProcessSupervisor supervisor, IIpcServer ipc)
+        {
+            _supervisor = supervisor;
+            _ipc = ipc;
+        }
 
         // GET /api/services
         [HttpGet]
         public async Task<IEnumerable<ServiceStatus>> GetAll()
-        {
-            return await _supervisor.ListStatusAsync();
-        }
+            => await _supervisor.ListStatusAsync();
 
-        // In ServicesController.cs
+        // GET /api/services/{name}/status
         [HttpGet("{name}/status")]
         public IEnumerable<WorkerStatus> GetWorkerStatuses(string name)
-        {
-            var ipc = HttpContext.RequestServices.GetRequiredService<IIpcServer>() as IpcServer;
-            return ipc?.GetLatestStatuses(name) ?? Enumerable.Empty<WorkerStatus>();
-        }
+            => _ipc.GetLatestStatuses(name);
 
         // POST /api/services/{name}/start
         [HttpPost("{name}/start")]
@@ -38,28 +40,15 @@ namespace Orchestrator.WebApi.Controllers
         [HttpPost("{name}/stop")]
         public Task Stop(string name)
             => _supervisor.StopAsync(name);
-        // in ServicesController.cs
 
+        // POST /api/services/report
         [HttpPost("report")]
         public async Task Report([FromBody] WorkerStatus status)
-        {
-            var ipc = HttpContext.RequestServices.GetRequiredService<IIpcServer>();
-            await ipc.ReportStatus(status);
-        }
-
-        // existing code…
+            => await _ipc.ReportStatus(status);
 
         // GET /api/services/internal
         [HttpGet("internal")]
         public IEnumerable<InternalStatus> GetInternalStatuses()
-        {
-            var ipc = HttpContext.RequestServices.GetRequiredService<IIpcServer>() as IpcServer;
-            return ipc?.GetInternalStatuses() ?? Enumerable.Empty<InternalStatus>();
-
-            var all = HttpContext.RequestServices.GetServices<IInternalHealth>();
-            return all.Select(s => s.GetStatus());
-        }
-
+            => _ipc.GetInternalStatuses();
     }
-
 }

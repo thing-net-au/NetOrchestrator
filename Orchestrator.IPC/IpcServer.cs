@@ -2,12 +2,10 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using Orchestrator.Core.Interfaces;       // IIpcServer, IInternalHealth
-using Orchestrator.Core.Models;
-using Orchestrator.Supervisor;            // IProcessSupervisor
-using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Orchestrator.Core;
-using System.Net.Http;
+using Orchestrator.Core.Interfaces;
+using Orchestrator.Core.Models;
 
 namespace Orchestrator.IPC
 {
@@ -15,17 +13,19 @@ namespace Orchestrator.IPC
     {
         private readonly IProcessSupervisor _supervisor;
         private readonly IEnumerable<IInternalHealth> _internalHealthProviders;
+        private readonly IOptions<OrchestratorConfig> _config;
 
-        // store the last report for each (service, pid)
-        private readonly ConcurrentDictionary<(string Service, int Pid), WorkerStatus> _statuses
-            = new();
+        // Store the last report for each (service, pid)
+        private readonly ConcurrentDictionary<(string Service, int Pid), WorkerStatus> _statuses = new();
 
         public IpcServer(
             IProcessSupervisor supervisor,
-            IEnumerable<IInternalHealth> internalHealthProviders)
+            IEnumerable<IInternalHealth> internalHealthProviders,
+            IOptions<OrchestratorConfig> config)
         {
             _supervisor = supervisor;
             _internalHealthProviders = internalHealthProviders;
+            _config = config;
         }
 
         /// <inheritdoc/>
@@ -46,16 +46,8 @@ namespace Orchestrator.IPC
                 .Select(kv => kv.Value);
 
         /// <inheritdoc/>
-        public IReadOnlyCollection<string> GetRegisteredServices()
-            => OrchestratorConfig.Current.Services.Keys.ToList().AsReadOnly();
-
-        /// <inheritdoc/>
         public IEnumerable<InternalStatus> GetInternalStatuses()
-        {
-            // Simply invoke GetStatus() on each injected IInternalHealth implementation
-            return _internalHealthProviders
-                .Select(provider => provider.GetStatus());
-        }
-
+            => _internalHealthProviders.Select(p => p.GetStatus());
     }
 }
+

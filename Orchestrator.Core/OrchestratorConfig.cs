@@ -1,28 +1,13 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-using System.Collections.Generic;
-using Microsoft.Extensions.Configuration;
-using Orchestrator.Core.Interfaces;
+﻿using System.Collections.Generic;
 using Orchestrator.Core.Models;
 
 namespace Orchestrator.Core
 {
-    public class OrchestratorConfig : IConfigurationLoader
+    public class OrchestratorConfig
     {
-        public static OrchestratorConfig Current { get; private set; }
-
-        public Dictionary<string, ServiceConfig> Services { get; set; }
-        public GlobalConfig Global { get; set; }
-        public SchedulingConfig Scheduling { get; set; }
-        public WebConfig Web { get; set; }
-
-        public void Load(IConfiguration configuration)
-        {
-            Current = configuration.Get<OrchestratorConfig>();
-        }
+        public Dictionary<string, ServiceConfig> Services { get; set; } = new();
+        public GlobalConfig Global { get; set; } = new();
+        public SchedulingConfig Scheduling { get; set; } = new();
+        public WebConfig Web { get; set; } = new();
     }
 }

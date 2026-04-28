@@ -1,16 +1,11 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace Orchestrator.Core.Models
+﻿namespace Orchestrator.Core.Models
 {
     public class WebConfig
     {
-        public int UiPort { get; set; }
-        public int ApiPort { get; set; }
-        public int StreamBufferSize { get; set; }
-        public string ApiBaseUrl { get; set; }
+        public int UiPort { get; set; } = 5000;
+        public int ApiPort { get; set; } = 5001;
+        public string BindIP { get; set; } = "127.0.0.1";
+        public int StreamBufferSize { get; set; } = 8192;
+        public string? ApiBaseUrl { get; set; }
     }
 }
