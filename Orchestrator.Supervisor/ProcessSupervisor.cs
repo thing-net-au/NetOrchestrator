@@ -31,8 +31,8 @@ namespace Orchestrator.Supervisor
         private readonly IOptions<OrchestratorConfig> _config;
         private readonly ILogger<ProcessSupervisor> _logger;
 
-        /// <summary>Backoff in milliseconds before restarting a crashed process.</summary>
-        private const int RestartBackoffMs = 5000;
+        /// <summary>Backoff in milliseconds before restarting a crashed process (configurable via Global.RestartBackoffMs).</summary>
+        private int RestartBackoffMs => _config.Value.Global.RestartBackoffMs;
 
         public ProcessSupervisor(
             ILogStreamService logStream,
@@ -91,7 +91,7 @@ namespace Orchestrator.Supervisor
 
                     _logger.LogInformation(
                         "Process {ProcessId} for service {ServiceName} exited with code {ExitCode}.",
-                        proc.Id, serviceName, exitCode);
+                        proc.Id, Sanitize(serviceName), exitCode);
 
                     // Remove from tracking list
                     lock (list)
@@ -107,7 +107,7 @@ namespace Orchestrator.Supervisor
                         {
                             _logger.LogWarning(
                                 "Service {ServiceName} crashed (exit code {ExitCode}). Restarting in {BackoffMs}ms.",
-                                serviceName, exitCode, RestartBackoffMs);
+                                Sanitize(serviceName), exitCode, RestartBackoffMs);
                             await Task.Delay(RestartBackoffMs);
                             try
                             {
@@ -116,7 +116,7 @@ namespace Orchestrator.Supervisor
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogError(ex, "Failed to restart service {ServiceName}.", serviceName);
+                                _logger.LogError(ex, "Failed to restart service {ServiceName}.", Sanitize(serviceName));
                             }
                         });
                     }
@@ -135,9 +135,9 @@ namespace Orchestrator.Supervisor
 
                 _logger.LogInformation(
                     "Starting process {ServiceName}, WorkingDirectory='{WorkingDirectory}'.",
-                    serviceName, proc.StartInfo.WorkingDirectory);
+                    Sanitize(serviceName), proc.StartInfo.WorkingDirectory);
                 proc.Start();
-                _logger.LogInformation("Started process {ServiceName}, PID={ProcessId}.", serviceName, proc.Id);
+                _logger.LogInformation("Started process {ServiceName}, PID={ProcessId}.", Sanitize(serviceName), proc.Id);
                 proc.BeginOutputReadLine();
                 proc.BeginErrorReadLine();
 
@@ -234,7 +234,9 @@ namespace Orchestrator.Supervisor
             return Task.FromResult(statuses);
         }
 
-        // --- Private helpers ---------------------------------------------------
+        /// <summary>Strips newlines and control characters from log parameter values to prevent log-forging attacks.</summary>
+        private static string Sanitize(string value)
+            => value.Replace('\r', '_').Replace('\n', '_').Replace('\0', '_');
 
         private async Task ReportServiceStatusAsync(string serviceName)
         {
@@ -250,7 +252,7 @@ namespace Orchestrator.Supervisor
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error reporting status for service {ServiceName}.", serviceName);
+                _logger.LogError(ex, "Error reporting status for service {ServiceName}.", Sanitize(serviceName));
             }
         }
 

@@ -94,7 +94,7 @@ namespace Orchestrator.IPC
                 return NamedPipeServerStreamAcl.Create(
                     PipeName, PipeDirection.InOut,
                     NamedPipeServerStream.MaxAllowedServerInstances,
-                    PipeTransmissionMode.Byte,
+                    PipeTransmissionMode.Message,
                     PipeOptions.Asynchronous,
                     inBufferSize: 0, outBufferSize: 0,
                     security);
@@ -106,7 +106,7 @@ namespace Orchestrator.IPC
             return new NamedPipeServerStream(
                 PipeName, PipeDirection.InOut,
                 NamedPipeServerStream.MaxAllowedServerInstances,
-                PipeTransmissionMode.Byte,
+                PipeTransmissionMode.Message,
                 PipeOptions.Asynchronous);
         }
 

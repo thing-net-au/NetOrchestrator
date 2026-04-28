@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Orchestrator.Core;
 using Orchestrator.Core.Interfaces;
+using Orchestrator.Core.Models;
 
 namespace Orchestrator
 {
@@ -45,7 +46,7 @@ namespace Orchestrator
                 }
 
                 var intervalMs = _config.Value.Global.HealthCheckInterval;
-                if (intervalMs <= 0) intervalMs = 10000;
+                if (intervalMs <= 0) intervalMs = GlobalConfig.DefaultHealthCheckIntervalMs;
                 await Task.Delay(intervalMs, stoppingToken);
             }
         }

@@ -135,9 +135,12 @@ namespace Orchestrator.Scheduler
             _logger.LogDebug("Demand policy for {Service}: avgCpu={AvgCpu:F1}%, threshold={Threshold}%, running={Running}.",
                 svcConfig.Name, avgCpu, threshold, running);
 
+            // Scale up when avgCPU exceeds threshold
             if (avgCpu > threshold && running < svcConfig.MaxInstances)
                 await _supervisor.StartAsync(svcConfig.Name, 1);
-            else if (avgCpu < threshold / 2.0 && running > svcConfig.MinInstances)
+            // Scale down when avgCPU drops below threshold × DemandScaleDownRatio (hysteresis band)
+            else if (avgCpu < threshold * _config.Value.Global.DemandScaleDownRatio
+                     && running > svcConfig.MinInstances)
                 await _supervisor.StopAsync(svcConfig.Name, 1);
         }
 
