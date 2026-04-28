@@ -100,13 +100,13 @@ namespace Orchestrator.IPC
                     security);
             }
 
-            // On Linux the named pipe maps to a Unix domain socket; the filesystem
-            // ACL on /tmp/.orc_ipc_pipe is governed by the process umask (typically
-            // 0600 for a service account).
+            // On Linux, PipeTransmissionMode.Message is not supported; use Byte mode instead.
+            // The filesystem ACL on the Unix domain socket is governed by the process umask
+            // (typically 0600 for a service account).
             return new NamedPipeServerStream(
                 PipeName, PipeDirection.InOut,
                 NamedPipeServerStream.MaxAllowedServerInstances,
-                PipeTransmissionMode.Message,
+                PipeTransmissionMode.Byte,
                 PipeOptions.Asynchronous);
         }
 

@@ -108,7 +108,15 @@ namespace Orchestrator.Scheduler
                     _logger.LogError(ex, "Error in PolicyScheduler loop.");
                 }
 
-                await Task.Delay(interval, stoppingToken);
+                try
+                {
+                    await Task.Delay(interval, stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    // Expected on graceful shutdown — exit the loop cleanly
+                    break;
+                }
             }
         }
 
