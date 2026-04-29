@@ -1,6 +1,7 @@
-﻿using System;
+using System;
+using System.Net;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.Extensions.Configuration;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Orchestrator.Core;
@@ -14,55 +15,55 @@ namespace Orchestrator.WebUI
         {
             var builder = WebApplication.CreateBuilder(args);
 
-            // 1) Load your orchestrator.json
+            // 1) Load orchestrator.json
             builder.Configuration
                    .SetBasePath(AppContext.BaseDirectory)
                    .AddJsonFile("orchestrator.json", optional: false, reloadOnChange: true);
-            var cfg = new OrchestratorConfig();
-            cfg.Load(builder.Configuration);
-            builder.Services.AddServerSideBlazor()
-    .AddCircuitOptions(options => { options.DetailedErrors = true; });
 
-            // 2) Blazor Web App hosting
-            builder.Services.AddRazorComponents()
-                            .AddInteractiveServerComponents();          // Server‐side interactivity :contentReference[oaicite:0]{index=0}
-            builder.Services.AddHttpContextAccessor();
-            builder.Services.AddHttpClient("OrcApi", (sp, client) =>
+            // Bind config eagerly for Kestrel setup
+            var startupCfg = builder.Configuration.Get<OrchestratorConfig>()
+                             ?? new OrchestratorConfig();
+            var uiPort = startupCfg.Web.UiPort;
+            var bindIp = startupCfg.Web.BindIP ?? "127.0.0.1";
+            var apiBase = startupCfg.Web.ApiBaseUrl
+                          ?? $"http://{bindIp}:{startupCfg.Web.ApiPort}";
+
+            builder.WebHost.ConfigureKestrel(opts =>
             {
-                var httpContext = sp.GetRequiredService<IHttpContextAccessor>().HttpContext
-                                  ?? throw new InvalidOperationException("No HttpContext");
-                var request = httpContext.Request;
-                // Build a UriBuilder off the incoming request
-                var origin = new UriBuilder
-                {
-                    Scheme = request.Scheme,                     // http or https
-                    Host = request.Host.Host,                  // e.g. "localhost" or "api.myapp.com"
-                    Port = 5001                                 // default api port
-                }.Uri;
-
-                client.BaseAddress = origin;
+                opts.Listen(IPAddress.Parse(bindIp), uiPort);
+                // To enable HTTPS: opts.Listen(IPAddress.Parse(bindIp), uiPort,
+                //     listenOpts => listenOpts.UseHttps());
             });
 
-            // 3) Kestrel on UI port
-            builder.WebHost.ConfigureKestrel(opts =>
-                opts.ListenAnyIP(OrchestratorConfig.Current.Web.UiPort));
-                //opts.ListenAnyIP(OrchestratorConfig.Current.Web.UiPort, listen => listen.UseHttps()));
+            // 2) Register OrchestratorConfig via IOptions<>
+            builder.Services.Configure<OrchestratorConfig>(builder.Configuration);
+
+            // 3) Blazor Server
+            builder.Services.AddServerSideBlazor()
+                .AddCircuitOptions(o => { o.DetailedErrors = true; });
+            builder.Services.AddRazorComponents()
+                            .AddInteractiveServerComponents();
+
+            // 4) HttpClient for Orchestrator API — no IHttpContextAccessor needed
+            builder.Services.AddHttpClient("OrcApi", client =>
+            {
+                client.BaseAddress = new Uri(apiBase.TrimEnd('/') + "/");
+            });
 
             var app = builder.Build();
 
-            // 4) Static files & routing
+            // 5) Pipeline
             if (!app.Environment.IsDevelopment())
             {
                 app.UseExceptionHandler("/Error");
                 app.UseHsts();
             }
             app.UseHttpsRedirection();
-            app.UseStaticFiles();   // serve wwwroot/* :contentReference[oaicite:1]{index=1}
+            app.UseStaticFiles();
             app.UseRouting();
             app.UseAntiforgery();
-            // 5) Wire up your App component as the only endpoint
             app.MapRazorComponents<App>()
-               .AddInteractiveServerRenderMode();  // fully prerender then hydrate via SignalR :contentReference[oaicite:2]{index=2}
+               .AddInteractiveServerRenderMode();
 
             app.Run();
         }

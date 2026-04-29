@@ -4,6 +4,7 @@
 @using System.Text.Json
 @using Microsoft.AspNetCore.Components
 @using Microsoft.AspNetCore.Components.Web
+@using Microsoft.Extensions.Options
 @using Microsoft.JSInterop
 @using Orchestrator.Core
 @using Orchestrator.Core.Models
@@ -11,6 +12,7 @@
 @inject IHttpClientFactory ClientFactory
 @inject IJSRuntime JS
 @inject NavigationManager Nav
+@inject IOptions<OrchestratorConfig> OrcConfig
 
 <h1>Orchestrator Dashboard</h1>
 
@@ -157,7 +159,8 @@ else
         statusRef?.Dispose();
         statusRef = DotNetObjectReference.Create(this);
 
-        var apiBase = OrchestratorConfig.Current.Web.ApiBaseUrl.TrimEnd('/');
+        var apiBase = OrcConfig.Value.Web.ApiBaseUrl?.TrimEnd('/')
+                      ?? $"http://{OrcConfig.Value.Web.BindIP ?? "127.0.0.1"}:{OrcConfig.Value.Web.ApiPort}";
         var statusUrl = $"{apiBase}/api/status/stream";
 
         await JS.InvokeVoidAsync("logStream.status.open", statusRef, statusUrl);
@@ -190,7 +193,7 @@ else
     private async Task StartSupervisorLogs()
     {
         var baseUri = new Uri(Nav.BaseUri);
-        var apiPort = OrchestratorConfig.Current.Web.ApiPort;
+        var apiPort = OrcConfig.Value.Web.ApiPort;
         var apiOrigin = new UriBuilder(baseUri.Scheme, baseUri.Host, apiPort).Uri;
 
         var logsUrl = new Uri(apiOrigin, "/api/services/_supervisor/logs/stream").ToString();
@@ -223,7 +226,7 @@ else
     {
         selectedService = name;
         var baseUri = new Uri(Nav.BaseUri);
-        var apiPort = OrchestratorConfig.Current.Web.ApiPort;
+        var apiPort = OrcConfig.Value.Web.ApiPort;
         var apiOrigin = new UriBuilder(baseUri.Scheme, baseUri.Host, apiPort).Uri;
 
         var logsUrl = new Uri(apiOrigin, $"/api/services/{name}/logs/stream").ToString();
