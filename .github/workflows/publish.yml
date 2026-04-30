@@ -1,0 +1,169 @@
+# Versioned publish workflow
+# Triggers on semver tag pushes (e.g. v1.2.3) and supports manual dispatch.
+# Produces self-contained binaries for win-x64, linux-x64, and linux-arm64,
+# archives them, then creates a GitHub Release with all assets attached.
+
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version override (e.g. 1.2.3). Defaults to the tag name.'
+        required: false
+        default: ''
+
+jobs:
+  publish:
+    name: Publish (${{ matrix.rid }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            archive_ext: zip
+          - rid: linux-x64
+            archive_ext: tar.gz
+          - rid: linux-arm64
+            archive_ext: tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Extract version
+        id: version
+        shell: bash
+        run: |
+          if [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            # Strip leading 'v' from tag name (e.g. v1.2.3 -> 1.2.3)
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore
+        run: dotnet restore NetOrchestrator.sln
+
+      - name: Test
+        run: dotnet test NetOrchestrator.sln --no-restore --configuration Release --verbosity normal
+
+      - name: Publish
+        run: |
+          dotnet publish Orchestrator/Orchestrator.csproj \
+            --configuration Release \
+            --runtime ${{ matrix.rid }} \
+            --self-contained true \
+            /p:PublishSingleFile=true \
+            /p:Version="${{ env.VERSION }}" \
+            /p:AssemblyVersion="${{ env.VERSION }}" \
+            /p:FileVersion="${{ env.VERSION }}" \
+            --output "publish/${{ matrix.rid }}"
+
+      - name: Sign Windows binaries
+        if: matrix.rid == 'win-x64'
+        env:
+          THINGCERT: ${{ secrets.THINGCERT }}
+          THINGCERTKEY: ${{ secrets.THINGCERTKEY }}
+        run: |
+          if [[ -z "${THINGCERT}" ]]; then
+            echo "::warning::THINGCERT secret is not set – Windows binaries will NOT be signed."
+            exit 0
+          fi
+          sudo apt-get install -y osslsigncode
+          # Decode the base64-encoded PFX certificate to a temp file
+          echo "${THINGCERT}" | base64 -d > /tmp/signing.pfx
+          # Sign every .exe and .dll in the publish output
+          find "publish/${{ matrix.rid }}" -type f \( -name "*.exe" -o -name "*.dll" \) | \
+          while read -r file; do
+            osslsigncode sign \
+              -pkcs12 /tmp/signing.pfx \
+              -pass "${THINGCERTKEY}" \
+              -in  "$file" \
+              -out "${file}.signed"
+            mv "${file}.signed" "$file"
+          done
+        # Always remove the cert from disk, even if signing fails
+      - name: Remove signing certificate
+        if: matrix.rid == 'win-x64' && always()
+        run: rm -f /tmp/signing.pfx
+
+      - name: Archive (zip – Windows)
+        if: matrix.archive_ext == 'zip'
+        run: |
+          cd publish/${{ matrix.rid }}
+          zip -r "../../NetOrchestrator-${{ env.VERSION }}-${{ matrix.rid }}.zip" .
+
+      - name: Archive (tar.gz – Linux)
+        if: matrix.archive_ext == 'tar.gz'
+        run: |
+          tar -czf "NetOrchestrator-${{ env.VERSION }}-${{ matrix.rid }}.tar.gz" \
+            -C "publish/${{ matrix.rid }}" .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetOrchestrator-${{ env.VERSION }}-${{ matrix.rid }}
+          path: NetOrchestrator-${{ env.VERSION }}-${{ matrix.rid }}.${{ matrix.archive_ext }}
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: publish
+    permissions:
+      contents: write
+
+    steps:
+      - name: Extract version
+        id: version
+        shell: bash
+        run: |
+          if [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Detect pre-release
+        id: prerelease
+        shell: bash
+        run: |
+          # A pre-release tag contains a hyphen after the numeric part (e.g. v1.0.0-beta.1)
+          if [[ "${{ env.VERSION }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+-.+ ]]; then
+            echo "IS_PRERELEASE=true" >> "$GITHUB_ENV"
+          else
+            echo "IS_PRERELEASE=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4.1.8
+        with:
+          path: artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: NetOrchestrator ${{ env.VERSION }}
+          prerelease: ${{ env.IS_PRERELEASE }}
+          generate_release_notes: true
+          files: artifacts/**/*
