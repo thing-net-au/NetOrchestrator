@@ -82,6 +82,10 @@ jobs:
           THINGCERT: ${{ secrets.THINGCERT }}
           THINGCERTKEY: ${{ secrets.THINGCERTKEY }}
         run: |
+          if [[ -z "${THINGCERT}" ]]; then
+            echo "::warning::THINGCERT secret is not set – Windows binaries will NOT be signed."
+            exit 0
+          fi
           sudo apt-get install -y osslsigncode
           # Decode the base64-encoded PFX certificate to a temp file
           echo "${THINGCERT}" | base64 -d > /tmp/signing.pfx
