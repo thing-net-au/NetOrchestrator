@@ -76,6 +76,30 @@ jobs:
             /p:FileVersion="${{ env.VERSION }}" \
             --output "publish/${{ matrix.rid }}"
 
+      - name: Sign Windows binaries
+        if: matrix.rid == 'win-x64'
+        env:
+          THINGCERT: ${{ secrets.THINGCERT }}
+          THINGCERTKEY: ${{ secrets.THINGCERTKEY }}
+        run: |
+          sudo apt-get install -y osslsigncode
+          # Decode the base64-encoded PFX certificate to a temp file
+          echo "${THINGCERT}" | base64 -d > /tmp/signing.pfx
+          # Sign every .exe and .dll in the publish output
+          find "publish/${{ matrix.rid }}" -type f \( -name "*.exe" -o -name "*.dll" \) | \
+          while read -r file; do
+            osslsigncode sign \
+              -pkcs12 /tmp/signing.pfx \
+              -pass "${THINGCERTKEY}" \
+              -in  "$file" \
+              -out "${file}.signed"
+            mv "${file}.signed" "$file"
+          done
+        # Always remove the cert from disk, even if signing fails
+      - name: Remove signing certificate
+        if: matrix.rid == 'win-x64' && always()
+        run: rm -f /tmp/signing.pfx
+
       - name: Archive (zip – Windows)
         if: matrix.archive_ext == 'zip'
         run: |
