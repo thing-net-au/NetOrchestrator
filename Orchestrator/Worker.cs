@@ -1,7 +1,10 @@
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Orchestrator.Core;
 using Orchestrator.Core.Interfaces;
+using Orchestrator.Core.Models;
 
 namespace Orchestrator
 {
@@ -10,15 +13,18 @@ namespace Orchestrator
         private readonly ILogger<Worker> _logger;
         private readonly ILogStreamService _logStream;
         private readonly IEnumerable<IInternalHealth> _internalHealthProviders;
+        private readonly IOptions<OrchestratorConfig> _config;
 
         public Worker(
             ILogger<Worker> logger,
             ILogStreamService logStream,
-            IEnumerable<IInternalHealth> internalHealthProviders)
+            IEnumerable<IInternalHealth> internalHealthProviders,
+            IOptions<OrchestratorConfig> config)
         {
             _logger = logger;
             _logStream = logStream;
             _internalHealthProviders = internalHealthProviders;
+            _config = config;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -27,19 +33,18 @@ namespace Orchestrator
 
             while (!stoppingToken.IsCancellationRequested)
             {
-                var now = DateTimeOffset.UtcNow;
-                var msg = $"Worker running at: {now:O}";
+                _logger.LogInformation("Worker heartbeat at {Time:O}.", DateTimeOffset.UtcNow);
 
-                _logger.LogInformation("{Message}", msg);
-                _logStream.Push("Worker", msg);
-
+                // Push fresh InternalStatus from each provider
                 foreach (var health in _internalHealthProviders)
                 {
                     var status = health.GetStatus();
                     _logStream.Push("InternalStatus", JsonSerializer.Serialize(status));
                 }
 
-                await Task.Delay(1000, stoppingToken);
+                var intervalMs = _config.Value.Global.HealthCheckInterval;
+                if (intervalMs <= 0) intervalMs = GlobalConfig.DefaultHealthCheckIntervalMs;
+                await Task.Delay(intervalMs, stoppingToken);
             }
 
             _logger.LogInformation("Worker telemetry loop stopped.");

@@ -1,7 +1,15 @@
+using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Orchestrator.Core;
 using Orchestrator.Core.Interfaces;
 using Orchestrator.Core.Models;
@@ -10,189 +18,270 @@ namespace Orchestrator.Supervisor
 {
     /// <summary>
     /// Supervises .NET processes: launch, monitor health, capture logs, and report status.
+    /// Implements <see cref="IHostedService"/> to clean up all child processes on shutdown.
     /// </summary>
-    public class ProcessSupervisor : IProcessSupervisor
+    public class ProcessSupervisor : IProcessSupervisor, IHostedService
     {
-        private readonly ConcurrentDictionary<string, ConcurrentDictionary<int, Process>> _processes = new();
+        // Inner list is protected by lock(list) for all mutations
+        private readonly ConcurrentDictionary<string, List<Process>> _processes = new();
+        // Tracks intentional stops to suppress auto-restart
+        private readonly ConcurrentDictionary<string, bool> _stoppingServices = new();
+
         private readonly ILogStreamService _logStream;
+        private readonly IOptions<OrchestratorConfig> _config;
         private readonly ILogger<ProcessSupervisor> _logger;
 
-        public ProcessSupervisor(ILogStreamService logStream, ILogger<ProcessSupervisor> logger)
+        /// <summary>Backoff in milliseconds before restarting a crashed process (configurable via Global.RestartBackoffMs).</summary>
+        private int RestartBackoffMs => _config.Value.Global.RestartBackoffMs;
+
+        public ProcessSupervisor(
+            ILogStreamService logStream,
+            IOptions<OrchestratorConfig> config,
+            ILogger<ProcessSupervisor> logger)
         {
             _logStream = logStream;
+            _config = config;
             _logger = logger;
         }
 
-        /// <inheritdoc />
-        public async Task StartAsync(string serviceName, int count = 1)
+        // --- IHostedService (graceful shutdown) --------------------------------
+
+        Task IHostedService.StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        async Task IHostedService.StopAsync(CancellationToken cancellationToken)
         {
-            if (count <= 0)
-            {
-                _logger.LogWarning("Ignoring StartAsync for service {ServiceName} with non-positive count {Count}.", serviceName, count);
-                return;
-            }
+            _logger.LogInformation("ProcessSupervisor shutting down – stopping all managed processes.");
+            var shutdownTimeout = TimeSpan.FromSeconds(30);
 
-            if (!OrchestratorConfig.Current.Services.TryGetValue(serviceName, out var cfg))
+            foreach (var serviceName in _processes.Keys.ToList())
             {
+                _stoppingServices[serviceName] = true;
+                await StopAllInstancesAsync(serviceName, shutdownTimeout, cancellationToken);
+            }
+        }
+
+        // --- IProcessSupervisor -----------------------------------------------
+
+        /// <inheritdoc />
+        public Task StartAsync(string serviceName, int count = 1)
+        {
+            if (!_config.Value.Services.TryGetValue(serviceName, out var cfg))
                 throw new ArgumentException($"Service '{serviceName}' is not configured.");
-            }
 
-            var serviceProcesses = _processes.GetOrAdd(serviceName, _ => new ConcurrentDictionary<int, Process>());
+            var list = _processes.GetOrAdd(serviceName, _ => new List<Process>());
 
-            for (var i = 0; i < count; i++)
+            for (int i = 0; i < count; i++)
             {
-                var psi = BuildProcessStartInfo(cfg);
+                var psi = new ProcessStartInfo("dotnet", $"{cfg.ExecutablePath} {cfg.Arguments}")
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                if (!string.IsNullOrEmpty(cfg.WorkingDirectory))
+                    psi.WorkingDirectory = cfg.WorkingDirectory;
+
                 var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
 
                 proc.Exited += (_, _) =>
                 {
-                    serviceProcesses.TryRemove(proc.Id, out _);
-                    _logStream.Push("_supervisor", $"Process {proc.Id} exited with code {proc.ExitCode}");
-                    _logStream.Push(serviceName, $"Process {proc.Id} exited with code {proc.ExitCode}");
-                    _logger.LogInformation("Service {ServiceName} process {ProcessId} exited with code {ExitCode}.", serviceName, proc.Id, proc.ExitCode);
+                    int exitCode;
+                    try { exitCode = proc.ExitCode; } catch { exitCode = -1; }
+
+                    _logger.LogInformation(
+                        "Process {ProcessId} for service {ServiceName} exited with code {ExitCode}.",
+                        proc.Id, Sanitize(serviceName), exitCode);
+
+                    // Remove from tracking list
+                    lock (list)
+                    {
+                        list.Remove(proc);
+                    }
+
+                    // Auto-restart only for unexpected exits (not intentional stops)
+                    bool intentional = _stoppingServices.GetValueOrDefault(serviceName, false);
+                    if (!intentional && exitCode != 0)
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            _logger.LogWarning(
+                                "Service {ServiceName} crashed (exit code {ExitCode}). Restarting in {BackoffMs}ms.",
+                                Sanitize(serviceName), exitCode, RestartBackoffMs);
+                            await Task.Delay(RestartBackoffMs);
+                            try
+                            {
+                                if (!_stoppingServices.GetValueOrDefault(serviceName, false))
+                                    await StartAsync(serviceName, 1);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "Failed to restart service {ServiceName}.", Sanitize(serviceName));
+                            }
+                        });
+                    }
+
                     _ = ReportServiceStatusAsync(serviceName);
                 };
 
-                proc.OutputDataReceived += (_, e) => _logStream.Push(serviceName, e.Data);
-                proc.ErrorDataReceived += (_, e) => _logStream.Push(serviceName, e.Data);
-
-                _logger.LogInformation("Starting service process {ServiceName} in directory {WorkingDirectory}.", serviceName, proc.StartInfo.WorkingDirectory);
-                _logStream.Push("_supervisor", $"Starting Process {serviceName} WorkingDirectory='{proc.StartInfo.WorkingDirectory}'.");
-
-                try
+                proc.OutputDataReceived += (_, e) =>
                 {
-                    proc.Start();
-                    serviceProcesses[proc.Id] = proc;
-                    proc.BeginOutputReadLine();
-                    proc.BeginErrorReadLine();
-
-                    _logger.LogInformation("Started service process {ServiceName} with PID {ProcessId}.", serviceName, proc.Id);
-                    _logStream.Push("_supervisor", $"Started Process {serviceName}, {proc.Id}.");
-                }
-                catch (Exception ex)
+                    if (e.Data != null) _logStream.Push(serviceName, e.Data);
+                };
+                proc.ErrorDataReceived += (_, e) =>
                 {
-                    _logger.LogError(ex, "Failed to start service process {ServiceName}.", serviceName);
-                    proc.Dispose();
-                    throw;
-                }
+                    if (e.Data != null) _logStream.Push(serviceName, e.Data);
+                };
+
+                _logger.LogInformation(
+                    "Starting process {ServiceName}, WorkingDirectory='{WorkingDirectory}'.",
+                    Sanitize(serviceName), proc.StartInfo.WorkingDirectory);
+                proc.Start();
+                _logger.LogInformation("Started process {ServiceName}, PID={ProcessId}.", Sanitize(serviceName), proc.Id);
+                proc.BeginOutputReadLine();
+                proc.BeginErrorReadLine();
+
+                lock (list) { list.Add(proc); }
             }
 
-            await ReportServiceStatusAsync(serviceName);
+            _ = ReportServiceStatusAsync(serviceName);
+            return Task.CompletedTask;
         }
 
         /// <inheritdoc />
-        public async Task StopAsync(string serviceName, int count = 1)
+        public Task StopAsync(string serviceName, int count = 1)
         {
-            if (count <= 0)
-            {
-                _logger.LogWarning("Ignoring StopAsync for service {ServiceName} with non-positive count {Count}.", serviceName, count);
-                return;
-            }
+            _stoppingServices[serviceName] = true;
 
-            if (_processes.TryGetValue(serviceName, out var serviceProcesses))
+            if (_processes.TryGetValue(serviceName, out var list))
             {
-                foreach (var process in serviceProcesses.Values.Take(count).ToList())
+                List<Process> toStop;
+                lock (list) { toStop = list.Take(count).ToList(); }
+
+                foreach (var p in toStop)
                 {
                     try
                     {
-                        if (!process.HasExited)
-                        {
-                            process.Kill(entireProcessTree: true);
-                            _logger.LogInformation("Killed service process {ServiceName} with PID {ProcessId}.", serviceName, process.Id);
-                        }
+                        if (!p.HasExited)
+                            p.Kill(entireProcessTree: true);
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "Failed to stop service process {ServiceName} with PID {ProcessId}.", serviceName, process.Id);
+                        _logger.LogWarning(ex, "Error killing process {ProcessId}.", p.Id);
                     }
                     finally
                     {
-                        serviceProcesses.TryRemove(process.Id, out _);
-                        process.Dispose();
+                        lock (list) { list.Remove(p); }
+                        p.Dispose();
                     }
                 }
             }
 
-            await ReportServiceStatusAsync(serviceName);
+            // Clear stopping flag once we've finished the intentional stop
+            if (_processes.TryGetValue(serviceName, out var remaining))
+            {
+                lock (remaining)
+                {
+                    if (remaining.Count == 0)
+                        _stoppingServices.TryRemove(serviceName, out _);
+                }
+            }
+
+            _ = ReportServiceStatusAsync(serviceName);
+            return Task.CompletedTask;
         }
 
         /// <inheritdoc />
         public Task<IEnumerable<ServiceStatus>> ListStatusAsync()
         {
-            var statuses = OrchestratorConfig.Current.Services.Keys.Select(name =>
+            var statuses = _config.Value.Services.Keys.Select(name =>
             {
-                _processes.TryGetValue(name, out var serviceProcesses);
-                var running = serviceProcesses?.Count ?? 0;
-                var state = running > 0 ? State.Running : State.Stopped;
+                _processes.TryGetValue(name, out var list);
+
+                List<Process> snapshot;
+                if (list != null)
+                    lock (list) { snapshot = list.Where(p => { try { return !p.HasExited; } catch { return false; } }).ToList(); }
+                else
+                    snapshot = new List<Process>();
+
+                bool? lastHealthy = null;
+                if (snapshot.Count > 0)
+                {
+                    lastHealthy = snapshot.Any(p =>
+                    {
+                        try
+                        {
+                            if (OperatingSystem.IsWindows())
+                                return p.Responding;
+                            return !p.HasExited;
+                        }
+                        catch { return false; }
+                    });
+                }
 
                 return new ServiceStatus
                 {
                     Name = name,
-                    RunningInstances = running,
-                    State = state,
-                    LastReportAt = DateTime.UtcNow
+                    RunningInstances = snapshot.Count,
+                    State = snapshot.Count > 0 ? State.Running : State.Stopped,
+                    LastReportAt = DateTime.UtcNow,
+                    LastHealthy = lastHealthy,
+                    ProcessIds = snapshot.Select(p => { try { return p.Id; } catch { return -1; } })
+                                         .Where(id => id >= 0).ToList()
                 };
             });
 
             return Task.FromResult(statuses);
         }
 
-        private static ProcessStartInfo BuildProcessStartInfo(ServiceConfig cfg)
-        {
-            var executablePath = cfg.ExecutablePath?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(executablePath))
-            {
-                throw new InvalidOperationException($"Service '{cfg.Name}' has empty executable path.");
-            }
+        /// <summary>Strips newlines and control characters from log parameter values to prevent log-forging attacks.</summary>
+        private static string Sanitize(string value)
+            => value.Replace('\r', '_').Replace('\n', '_').Replace('\0', '_');
 
-            var psi = new ProcessStartInfo("dotnet")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            psi.ArgumentList.Add(executablePath);
-            foreach (var arg in TokenizeArguments(cfg.Arguments))
-            {
-                psi.ArgumentList.Add(arg);
-            }
-
-            if (!string.IsNullOrWhiteSpace(cfg.WorkingDirectory))
-            {
-                psi.WorkingDirectory = cfg.WorkingDirectory;
-            }
-
-            return psi;
-        }
-
-        private static IEnumerable<string> TokenizeArguments(string? arguments)
-        {
-            if (string.IsNullOrWhiteSpace(arguments))
-            {
-                yield break;
-            }
-
-            foreach (var token in arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                yield return token;
-            }
-        }
-
-        /// <summary>
-        /// Serializes and pushes the current status of a service to the log stream.
-        /// </summary>
         private async Task ReportServiceStatusAsync(string serviceName)
         {
-            var status = (await ListStatusAsync()).FirstOrDefault(s => s.Name == serviceName);
-            if (status == null)
+            try
             {
-                return;
+                var statuses = await ListStatusAsync();
+                var status = statuses.FirstOrDefault(s => s.Name == serviceName);
+                if (status != null)
+                {
+                    var json = JsonSerializer.Serialize(status);
+                    _logStream.Push("ServiceStatus", json);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error reporting status for service {ServiceName}.", Sanitize(serviceName));
+            }
+        }
+
+        private async Task StopAllInstancesAsync(
+            string serviceName, TimeSpan timeout, CancellationToken ct)
+        {
+            if (!_processes.TryGetValue(serviceName, out var list)) return;
+
+            List<Process> procs;
+            lock (list) { procs = list.ToList(); }
+
+            foreach (var p in procs)
+            {
+                try
+                {
+                    if (!p.HasExited)
+                    {
+                        p.Kill(entireProcessTree: true);
+                        await Task.WhenAny(
+                            Task.Run(() => p.WaitForExit(), ct),
+                            Task.Delay(timeout, ct));
+                        if (!p.HasExited) p.Kill(entireProcessTree: true);
+                    }
+                }
+                catch { }
+                finally { p.Dispose(); }
             }
 
-            var json = JsonSerializer.Serialize(status);
-            _logStream.Push("ServiceStatus", json);
+            lock (list) { list.Clear(); }
         }
     }
 }

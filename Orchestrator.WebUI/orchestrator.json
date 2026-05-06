@@ -11,7 +11,9 @@
         "Threshold": 75,
         "Cron": null
       },
-      "Dependencies": [ "QueueListener" ]
+      "Dependencies": [
+        "QueueListener"
+      ]
     },
     "QueueListener": {
       "Name": "QueueListener",
@@ -30,7 +32,9 @@
   "Global": {
     "LoggingLevel": "Info",
     "IpcTimeout": 5000,
-    "HealthCheckInterval": 10000
+    "HealthCheckInterval": 10000,
+    "RestartBackoffMs": 5000,
+    "DemandScaleDownRatio": 0.5
   },
   "Scheduling": {
     "DefaultPolicy": "steady",
@@ -41,5 +45,6 @@
     "ApiPort": 5001,
     "BindIP": "127.0.0.1",
     "StreamBufferSize": 8192,
+    "ApiBaseUrl": "http://127.0.0.1:5001"
   }
 }

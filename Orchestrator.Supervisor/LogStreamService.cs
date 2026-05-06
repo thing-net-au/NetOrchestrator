@@ -1,35 +1,39 @@
-﻿using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
+﻿using System.Collections.Concurrent;
 using System.Threading.Channels;
-using System.Threading.Tasks;
+using Microsoft.Extensions.Options;
 using Orchestrator.Core;
 using Orchestrator.Core.Interfaces;
-using Orchestrator.Core.Models;
 
 namespace Orchestrator.Supervisor
 {
     /// <summary>
-    /// Streams log messages from processes to connected clients.
+    /// Streams log messages from processes to connected clients using bounded channels
+    /// to prevent unbounded memory growth when consumers are slow.
     /// </summary>
     public class LogStreamService : ILogStreamService
     {
         private readonly ConcurrentDictionary<string, Channel<string>> _channels = new();
+        private readonly int _bufferSize;
+
+        public LogStreamService(IOptions<OrchestratorConfig> config)
+        {
+            _bufferSize = config.Value.Web.StreamBufferSize > 0
+                ? config.Value.Web.StreamBufferSize
+                : 8192;
+        }
 
         /// <inheritdoc />
         public void Push(string serviceName, string message)
         {
             if (message == null) return;
-            var channel = _channels.GetOrAdd(serviceName, _ => Channel.CreateUnbounded<string>());
+            var channel = GetOrCreateChannel(serviceName);
             channel.Writer.TryWrite(message);
         }
 
         /// <inheritdoc />
         public async IAsyncEnumerable<string> StreamAsync(string serviceName)
         {
-            var channel = _channels.GetOrAdd(serviceName, _ => Channel.CreateUnbounded<string>());
+            var channel = GetOrCreateChannel(serviceName);
             while (await channel.Reader.WaitToReadAsync())
             {
                 while (channel.Reader.TryRead(out var msg))
@@ -38,7 +42,15 @@ namespace Orchestrator.Supervisor
                 }
             }
         }
-    }
 
- 
+        private Channel<string> GetOrCreateChannel(string serviceName)
+            => _channels.GetOrAdd(serviceName, _ =>
+                Channel.CreateBounded<string>(new BoundedChannelOptions(_bufferSize)
+                {
+                    FullMode = BoundedChannelFullMode.DropOldest,
+                    SingleReader = false,
+                    SingleWriter = false
+                }));
+    }
 }
+
