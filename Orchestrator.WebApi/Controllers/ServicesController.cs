@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.DependencyInjection;
 using Orchestrator.Core.Interfaces;
 using Orchestrator.Core.Models;
 
@@ -43,8 +42,14 @@ namespace Orchestrator.WebApi.Controllers
 
         // POST /api/services/report
         [HttpPost("report")]
-        public async Task Report([FromBody] WorkerStatus status)
-            => await _ipc.ReportStatus(status);
+        public async Task<IActionResult> Report([FromBody] WorkerStatus status)
+        {
+            if (status == null || string.IsNullOrWhiteSpace(status.ServiceName))
+                return BadRequest("Valid worker status payload is required.");
+
+            await _ipc.ReportStatus(status);
+            return Accepted();
+        }
 
         // GET /api/services/internal
         [HttpGet("internal")]

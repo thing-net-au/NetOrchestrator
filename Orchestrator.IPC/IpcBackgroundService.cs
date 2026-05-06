@@ -1,8 +1,5 @@
-﻿using System;
 using System.IO.Pipes;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -119,24 +116,37 @@ namespace Orchestrator.IPC
 
                 // Simple JSON-RPC: { "method": "...", "params": [...] }
                 var json = await reader.ReadLineAsync().WithCancellation(token);
-                if (json == null) return;
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    await writer.WriteLineAsync("{\"error\":\"Empty payload\"}");
+                    return;
+                }
 
-                var doc = JsonDocument.Parse(json);
-                var method = doc.RootElement.GetProperty("method").GetString();
-                var args = doc.RootElement.GetProperty("params").EnumerateArray()
-                                         .Select(e => e.GetString()).ToArray();
+                using var doc = JsonDocument.Parse(json);
+                if (!doc.RootElement.TryGetProperty("method", out var methodElement) ||
+                    methodElement.ValueKind != JsonValueKind.String)
+                {
+                    await writer.WriteLineAsync("{\"error\":\"Missing method\"}");
+                    return;
+                }
+
+                var method = methodElement.GetString();
+                var args = doc.RootElement.TryGetProperty("params", out var paramsElement) &&
+                           paramsElement.ValueKind == JsonValueKind.Array
+                    ? paramsElement.EnumerateArray().Select(e => e.GetString()).ToArray()
+                    : Array.Empty<string>();
 
                 switch (method)
                 {
                     case "RequestNeighborExecution":
-                        if (args[0] != null)
+                        if (args.Length >= 1 && args[0] != null)
                             await _ipc.RequestNeighborExecution(args[0]!);
                         await writer.WriteLineAsync("{\"result\":\"ok\"}");
                         break;
 
                     case "ReportStatus":
                         // params[0] is the JSON-serialised WorkerStatus
-                        if (args[0] != null)
+                        if (args.Length >= 1 && args[0] != null)
                         {
                             var status = JsonSerializer.Deserialize<WorkerStatus>(args[0]!);
                             if (status != null)
@@ -150,6 +160,10 @@ namespace Orchestrator.IPC
                         break;
                 }
             }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("IPC client handling cancelled.");
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error handling IPC client.");
@@ -162,4 +176,3 @@ namespace Orchestrator.IPC
         }
     }
 }
-

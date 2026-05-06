@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Orchestrator.Core;
 using Orchestrator.Core.Interfaces;
 using Orchestrator.IPC;
@@ -12,7 +13,7 @@ namespace Orchestrator
     {
         public static async Task Main(string[] args)
         {
-            await Host.CreateDefaultBuilder(args)
+            var host = Host.CreateDefaultBuilder(args)
                  .UseWindowsService()
                  .UseSystemd()
                  .ConfigureAppConfiguration((ctx, cfg) =>
@@ -50,8 +51,12 @@ namespace Orchestrator
                      services.AddHostedService<InitialProcessLauncher>();
                      services.AddHostedService<Worker>();
                  })
-                 .Build()
-                 .RunAsync();
+                 .Build();
+
+            var logger = host.Services.GetRequiredService<ILogger<Program>>();
+            logger.LogInformation("Orchestrator host starting. Runtime={RuntimeVersion}.", Environment.Version);
+
+            await host.RunAsync();
         }
     }
 }

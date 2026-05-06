@@ -1,9 +1,11 @@
 using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.OpenApi.Models;
 using Orchestrator.Core;
@@ -68,6 +70,7 @@ namespace Orchestrator.WebApi
 
             // 4) Controllers + Swagger
             builder.Services.AddControllers();
+            builder.Services.AddHealthChecks();
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen(c =>
             {
@@ -88,7 +91,17 @@ namespace Orchestrator.WebApi
             // 5) Build
             var app = builder.Build();
 
+            var logger = app.Services.GetRequiredService<ILogger<Program>>();
+            logger.LogInformation("Starting Orchestrator.WebApi on {BindIp}:{ApiPort} with {ServiceCount} configured services.",
+                bindIp, apiPort, startupCfg.Services.Count);
+
             // 6) Middleware
+            app.Use(async (context, next) =>
+            {
+                context.Response.Headers["X-Request-ID"] = context.TraceIdentifier;
+                await next();
+            });
+
             if (app.Environment.IsDevelopment())
             {
                 app.UseDeveloperExceptionPage();
@@ -105,6 +118,9 @@ namespace Orchestrator.WebApi
             app.UseCors("AllowAll");
             app.MapControllers();
 
+            app.MapHealthChecks("/health/live", new HealthCheckOptions());
+            app.MapHealthChecks("/health/ready", new HealthCheckOptions());
+
             // SSE: per-service log stream
             app.MapGet("/api/services/{name}/logs/stream", async context =>
             {
@@ -112,7 +128,10 @@ namespace Orchestrator.WebApi
                 var logs = context.RequestServices.GetRequiredService<ILogStreamService>();
                 context.Response.Headers.Append("Content-Type", "text/event-stream");
                 await foreach (var line in logs.StreamAsync(name))
+                {
                     await context.Response.WriteAsync($"data: {line}\n\n");
+                    await context.Response.Body.FlushAsync();
+                }
             });
 
             // SSE: internal status stream

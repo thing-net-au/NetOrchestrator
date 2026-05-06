@@ -1,10 +1,6 @@
-﻿using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Linq;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Cronos;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -64,6 +60,7 @@ namespace Orchestrator.Scheduler
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             var interval = TimeSpan.FromMilliseconds(_config.Value.Global.HealthCheckInterval);
+            _logger.LogInformation("Policy scheduler started with interval {IntervalMs}ms.", interval.TotalMilliseconds);
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -227,4 +224,3 @@ namespace Orchestrator.Scheduler
         }
     }
 }
-
