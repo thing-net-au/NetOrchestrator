@@ -1,15 +1,9 @@
-﻿// Project: Orchestrator.Scheduler (Class Library)
-// References: Orchestrator.Core, Orchestrator.Supervisor, Microsoft.Extensions.Hosting, System.Text.Json
-
-using System;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Text.Json;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Orchestrator.Core;
 using Orchestrator.Core.Interfaces;
 using Orchestrator.Core.Models;
-using System.Text.Json;
 
 namespace Orchestrator.Scheduler
 {
@@ -21,44 +15,52 @@ namespace Orchestrator.Scheduler
     {
         private readonly IProcessSupervisor _supervisor;
         private readonly ILogStreamService _log;
-        private DateTime _lastRun;
+        private readonly ILogger<PolicyScheduler> _logger;
+        private DateTime _lastRun = DateTime.MinValue;
 
-        public InternalStatus GetStatus() => new InternalStatus
+        public InternalStatus GetStatus()
         {
-            Name = nameof(PolicyScheduler),
-            IsHealthy = true,  // you could check if _lastRun is within twice the interval
-            Details = $"Last run at {_lastRun:O}"
-        };
+            var intervalMs = OrchestratorConfig.Current.Global.HealthCheckInterval;
+            var maxAge = TimeSpan.FromMilliseconds(intervalMs * 2L);
+            var age = DateTime.UtcNow - _lastRun;
 
+            return new InternalStatus
+            {
+                Name = nameof(PolicyScheduler),
+                IsHealthy = _lastRun != DateTime.MinValue && age <= maxAge,
+                Details = $"Last run at {_lastRun:O}, age={age.TotalSeconds:n1}s"
+            };
+        }
 
         public PolicyScheduler(
             IProcessSupervisor supervisor,
-            ILogStreamService logStream)
+            ILogStreamService logStream,
+            ILogger<PolicyScheduler> logger)
         {
             _supervisor = supervisor;
             _log = logStream;
+            _logger = logger;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             var interval = TimeSpan.FromMilliseconds(OrchestratorConfig.Current.Global.HealthCheckInterval);
+            _logger.LogInformation("Policy scheduler started with interval {IntervalMs}ms.", interval.TotalMilliseconds);
 
             while (!stoppingToken.IsCancellationRequested)
             {
-                // Fetch current statuses
+                _lastRun = DateTime.UtcNow;
                 var statuses = (await _supervisor.ListStatusAsync()).ToList();
 
-                // Report each service status via log stream
                 foreach (var status in statuses)
                 {
-                    var payload = JsonSerializer.Serialize(status);
-                    _log.Push("ServiceStatus", payload);
+                    _log.Push("ServiceStatus", JsonSerializer.Serialize(status));
                 }
 
                 foreach (var svcConfig in OrchestratorConfig.Current.Services.Values)
                 {
                     var status = statuses.FirstOrDefault(s => s.Name == svcConfig.Name);
-                    int running = status?.RunningInstances ?? 0;
+                    var running = status?.RunningInstances ?? 0;
 
                     switch (svcConfig.SchedulePolicy.Type.ToLowerInvariant())
                     {
@@ -70,8 +72,9 @@ namespace Orchestrator.Scheduler
                             break;
 
                         case "demand":
-                            int threshold = svcConfig.SchedulePolicy.Threshold ?? OrchestratorConfig.Current.Scheduling.DemandThreshold;
-                            // TODO: integrate actual metric checks
+                            var threshold = svcConfig.SchedulePolicy.Threshold ?? OrchestratorConfig.Current.Scheduling.DemandThreshold;
+                            _logger.LogDebug("Demand policy for {ServiceName} using threshold {Threshold}.", svcConfig.Name, threshold);
+
                             if (running < svcConfig.MinInstances)
                                 await _supervisor.StartAsync(svcConfig.Name, svcConfig.MinInstances - running);
                             else if (running > svcConfig.MaxInstances)
@@ -79,11 +82,11 @@ namespace Orchestrator.Scheduler
                             break;
 
                         case "cron":
-                            // TODO: evaluate CRON and schedule accordingly
+                            _logger.LogDebug("Cron policy for {ServiceName} is not implemented yet.", svcConfig.Name);
                             break;
 
                         default:
-                            // fallback
+                            _logger.LogWarning("Unknown policy type {PolicyType} for service {ServiceName}.", svcConfig.SchedulePolicy.Type, svcConfig.Name);
                             break;
                     }
                 }

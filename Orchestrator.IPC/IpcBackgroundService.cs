@@ -1,11 +1,5 @@
-﻿// Project: Orchestrator.IPC
-// File: IpcBackgroundService.cs
-
-using System;
 using System.IO.Pipes;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Orchestrator.Core.Interfaces;
@@ -22,14 +16,20 @@ namespace Orchestrator.IPC
         private readonly IIpcServer _ipc;
         private readonly ILogger<IpcBackgroundService> _logger;
         private const string PipeName = "orc_ipc_pipe";
-        private DateTime _lastRun;
+        private DateTime _lastRun = DateTime.MinValue;
 
-        public InternalStatus GetStatus() => new InternalStatus
+        public InternalStatus GetStatus()
         {
-            Name = nameof(IpcBackgroundService),
-            IsHealthy = true,  // or: (DateTime.UtcNow - _lastRun) < threshold
-            Details = $"Last run at {_lastRun:O}"
-        };
+            var maxAge = TimeSpan.FromSeconds(30);
+            var age = DateTime.UtcNow - _lastRun;
+
+            return new InternalStatus
+            {
+                Name = nameof(IpcBackgroundService),
+                IsHealthy = _lastRun != DateTime.MinValue && age <= maxAge,
+                Details = $"Last run at {_lastRun:O}, age={age.TotalSeconds:n1}s"
+            };
+        }
 
         public IpcBackgroundService(IIpcServer ipc, ILogger<IpcBackgroundService> logger)
         {
@@ -39,15 +39,16 @@ namespace Orchestrator.IPC
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("Starting IPC listener on pipe '{PipeName}'", PipeName);
+            _logger.LogInformation("Starting IPC listener on pipe {PipeName}.", PipeName);
 
             while (!stoppingToken.IsCancellationRequested)
             {
-                // Wait for a client to connect
                 using var server = new NamedPipeServerStream(PipeName, PipeDirection.InOut,
-                                        NamedPipeServerStream.MaxAllowedServerInstances,
-                                        PipeTransmissionMode.Message, PipeOptions.Asynchronous);
+                    NamedPipeServerStream.MaxAllowedServerInstances,
+                    PipeTransmissionMode.Message, PipeOptions.Asynchronous);
+
                 await server.WaitForConnectionAsync(stoppingToken);
+                _lastRun = DateTime.UtcNow;
 
                 _ = HandleClient(server, stoppingToken);
             }
@@ -60,31 +61,55 @@ namespace Orchestrator.IPC
                 using var reader = new StreamReader(pipe);
                 using var writer = new StreamWriter(pipe) { AutoFlush = true };
 
-                // Simple JSON-RPC: { "method": "RequestNeighborExecution", "params": ["MyService"] }
                 var json = await reader.ReadLineAsync().WithCancellation(token);
-                var doc = JsonDocument.Parse(json);
-                var method = doc.RootElement.GetProperty("method").GetString();
-                var args = doc.RootElement.GetProperty("params").EnumerateArray()
-                                    .Select(e => e.GetString()).ToArray();
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    await writer.WriteLineAsync("{\"error\":\"Empty payload\"}");
+                    return;
+                }
+
+                using var doc = JsonDocument.Parse(json);
+                if (!doc.RootElement.TryGetProperty("method", out var methodElement) ||
+                    methodElement.ValueKind != JsonValueKind.String)
+                {
+                    await writer.WriteLineAsync("{\"error\":\"Missing method\"}");
+                    return;
+                }
+
+                var method = methodElement.GetString();
+                var args = doc.RootElement.TryGetProperty("params", out var paramsElement) &&
+                           paramsElement.ValueKind == JsonValueKind.Array
+                    ? paramsElement.EnumerateArray().Select(e => e.GetString()).Where(s => !string.IsNullOrWhiteSpace(s)).ToArray()
+                    : Array.Empty<string>();
 
                 switch (method)
                 {
-                    case "RequestNeighborExecution":
-                        await _ipc.RequestNeighborExecution(args[0]);
+                    case "RequestNeighborExecution" when args.Length >= 1:
+                        await _ipc.RequestNeighborExecution(args[0]!);
                         await writer.WriteLineAsync("{\"result\":\"ok\"}");
+                        break;
+                    case "RequestNeighborExecution":
+                        await writer.WriteLineAsync("{\"error\":\"Missing service name\"}");
                         break;
                     default:
                         await writer.WriteLineAsync("{\"error\":\"Unknown method\"}");
                         break;
                 }
             }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("IPC client handling cancelled.");
+            }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error handling IPC client");
+                _logger.LogError(ex, "Error handling IPC client.");
             }
             finally
             {
-                if (pipe.IsConnected) pipe.Disconnect();
+                if (pipe.IsConnected)
+                {
+                    pipe.Disconnect();
+                }
             }
         }
     }

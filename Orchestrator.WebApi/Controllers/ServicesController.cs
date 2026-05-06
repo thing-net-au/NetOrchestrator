@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Core.Interfaces;
 using Orchestrator.Core.Models;
 using Orchestrator.IPC;
@@ -12,16 +12,16 @@ namespace Orchestrator.WebApi.Controllers
         private readonly IProcessSupervisor _supervisor;
 
         public ServicesController(IProcessSupervisor supervisor)
-            => _supervisor = supervisor;
+        {
+            _supervisor = supervisor;
+        }
 
-        // GET /api/services
         [HttpGet]
         public async Task<IEnumerable<ServiceStatus>> GetAll()
         {
             return await _supervisor.ListStatusAsync();
         }
 
-        // In ServicesController.cs
         [HttpGet("{name}/status")]
         public IEnumerable<WorkerStatus> GetWorkerStatuses(string name)
         {
@@ -29,37 +29,48 @@ namespace Orchestrator.WebApi.Controllers
             return ipc?.GetLatestStatuses(name) ?? Enumerable.Empty<WorkerStatus>();
         }
 
-        // POST /api/services/{name}/start
         [HttpPost("{name}/start")]
-        public Task Start(string name)
-            => _supervisor.StartAsync(name);
-
-        // POST /api/services/{name}/stop
-        [HttpPost("{name}/stop")]
-        public Task Stop(string name)
-            => _supervisor.StopAsync(name);
-        // in ServicesController.cs
-
-        [HttpPost("report")]
-        public async Task Report([FromBody] WorkerStatus status)
+        public async Task<IActionResult> Start(string name)
         {
-            var ipc = HttpContext.RequestServices.GetRequiredService<IIpcServer>();
-            await ipc.ReportStatus(status);
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return BadRequest("Service name is required.");
+            }
+
+            await _supervisor.StartAsync(name);
+            return Accepted();
         }
 
-        // existing code…
+        [HttpPost("{name}/stop")]
+        public async Task<IActionResult> Stop(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return BadRequest("Service name is required.");
+            }
 
-        // GET /api/services/internal
+            await _supervisor.StopAsync(name);
+            return Accepted();
+        }
+
+        [HttpPost("report")]
+        public async Task<IActionResult> Report([FromBody] WorkerStatus status)
+        {
+            if (status == null || string.IsNullOrWhiteSpace(status.ServiceName))
+            {
+                return BadRequest("Valid worker status payload is required.");
+            }
+
+            var ipc = HttpContext.RequestServices.GetRequiredService<IIpcServer>();
+            await ipc.ReportStatus(status);
+            return Accepted();
+        }
+
         [HttpGet("internal")]
         public IEnumerable<InternalStatus> GetInternalStatuses()
         {
             var ipc = HttpContext.RequestServices.GetRequiredService<IIpcServer>() as IpcServer;
             return ipc?.GetInternalStatuses() ?? Enumerable.Empty<InternalStatus>();
-
-            var all = HttpContext.RequestServices.GetServices<IInternalHealth>();
-            return all.Select(s => s.GetStatus());
         }
-
     }
-
 }

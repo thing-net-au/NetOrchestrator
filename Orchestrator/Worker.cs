@@ -1,12 +1,7 @@
-using System;
-using System.Collections.Generic;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Orchestrator.Core.Interfaces;
-using Orchestrator.Core.Models;
 
 namespace Orchestrator
 {
@@ -28,26 +23,26 @@ namespace Orchestrator
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            _logger.LogInformation("Worker telemetry loop started.");
+
             while (!stoppingToken.IsCancellationRequested)
             {
-                // 1) Your normal work log
-                var msg = $"Worker running at: {DateTimeOffset.Now:O}";
-                if (_logger.IsEnabled(LogLevel.Information))
-                {
-                    _logger.LogInformation(msg);
-                }
+                var now = DateTimeOffset.UtcNow;
+                var msg = $"Worker running at: {now:O}";
+
+                _logger.LogInformation("{Message}", msg);
                 _logStream.Push("Worker", msg);
 
-                // 2) Push fresh InternalStatus from each provider
                 foreach (var health in _internalHealthProviders)
                 {
                     var status = health.GetStatus();
-                    var json = JsonSerializer.Serialize(status);
-                    _logStream.Push("InternalStatus", json);
+                    _logStream.Push("InternalStatus", JsonSerializer.Serialize(status));
                 }
 
                 await Task.Delay(1000, stoppingToken);
             }
+
+            _logger.LogInformation("Worker telemetry loop stopped.");
         }
     }
 }
